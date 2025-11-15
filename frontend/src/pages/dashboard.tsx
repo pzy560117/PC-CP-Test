@@ -47,7 +47,7 @@ export default function DashboardPage() {
 
   const analysisResultsQuery = useQuery<AnalysisResult[]>({
     queryKey: ["analysis-results"],
-    queryFn: () => fetchAnalysisResults(6),
+    queryFn: () => fetchAnalysisResults({ limit: 6 }),
     refetchInterval: REFRESH_INTERVAL,
   })
 

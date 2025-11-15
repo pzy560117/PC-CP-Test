@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import json
 from contextlib import contextmanager
-from typing import Any, Iterator
+from typing import Any, Iterator, Sequence
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Connection
 
 from analysis.src.database import get_engine
@@ -175,9 +175,65 @@ def fetch_features_by_period(period: str) -> dict[str, Any] | None:
             {'period': period},
         ).mappings().all()
 
+    payload = _build_feature_payload(period, rows)
+    if not payload:
+        return None
+    cache_store.set_json(cache_key, payload, ttl=60)
+    return payload
+
+
+def fetch_features_batch(periods: Sequence[str]) -> dict[str, dict[str, Any]]:
+    '''批量按期号查询特征，自动复用缓存。'''
+
+    ordered = [period for period in dict.fromkeys(periods) if period]
+    result: dict[str, dict[str, Any]] = {}
+    missing: list[str] = []
+
+    for period in ordered:
+        cache_key = f'features:{period}'
+        cached = cache_store.get_json(cache_key)
+        if cached:
+            result[period] = cached
+        else:
+            missing.append(period)
+
+    if not missing:
+        return result
+
+    stmt = (
+        text(
+            '''
+            SELECT period, feature_type, feature_value, schema_version, meta, updated_at
+            FROM lottery_features
+            WHERE period IN :periods
+            ORDER BY period DESC, updated_at DESC
+            '''
+        ).bindparams(bindparam('periods', expanding=True))
+    )
+
+    with connection_scope() as conn:
+        rows = conn.execute(stmt, {'periods': tuple(missing)}).mappings().all()
+
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        grouped.setdefault(row['period'], []).append(row)
+
+    for period in ordered:
+        if period in result:
+            continue
+        payload = _build_feature_payload(period, grouped.get(period, []))
+        if payload:
+            cache_store.set_json(f'features:{period}', payload, ttl=60)
+            result[period] = payload
+
+    return result
+
+
+def _build_feature_payload(period: str, rows: Sequence[dict[str, Any]]) -> dict[str, Any] | None:
+    '''将 SQL 结果转换为标准特征结构。'''
+
     if not rows:
         return None
-
     features: dict[str, Any] = {}
     for row in rows:
         features[row['feature_type']] = {
@@ -186,9 +242,7 @@ def fetch_features_by_period(period: str) -> dict[str, Any] | None:
             'value': _parse_json(row['feature_value']),
             'updated_at': row['updated_at'],
         }
-    payload = {'period': period, 'features': features}
-    cache_store.set_json(cache_key, payload, ttl=60)
-    return payload
+    return {'period': period, 'features': features}
 
 
 def _parse_json(value: Any) -> Any:

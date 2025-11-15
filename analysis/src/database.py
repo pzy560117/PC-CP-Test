@@ -86,6 +86,25 @@ def insert_validated_draw(conn, record: dict) -> None:
         {"period": record["period"], "window": 20},
         priority=6,
     )
+    enqueue_analysis_job(
+        conn,
+        "statistical_analysis",
+        {"period": record["period"], "window": 180},
+        priority=7,
+    )
+    enqueue_analysis_job(
+        conn,
+        "strategy_backtest",
+        {
+            "period": record["period"],
+            "window": 360,
+            "short_window": 12,
+            "long_window": 60,
+            "stake": 1.0,
+            "payout_multiplier": 0.92,
+        },
+        priority=8,
+    )
 
 
 def enqueue_analysis_job(conn, job_type: str, payload: dict[str, Any], priority: int = 5) -> None:

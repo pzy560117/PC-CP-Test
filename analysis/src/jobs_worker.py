@@ -1,15 +1,17 @@
 """analysis_jobs worker：消费待处理任务并生成多种特征/分析结果。"""
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import logging
 import time
 from typing import Any, Callable
 
 from sqlalchemy import text
-from sqlalchemy.exc import SQLAlchemyError
 
+from .backtest import run_momentum_backtest
 from .database import record_pipeline_stat, session_scope
+from .statistics import build_statistical_report
 
 logger = logging.getLogger(__name__)
 
@@ -207,9 +209,130 @@ def _generate_trend_summary(conn, payload: dict[str, Any]) -> int:
     return result.lastrowid
 
 
+def _upsert_feature(conn, period: str, feature_type: str, payload: dict[str, Any], meta: dict[str, Any]) -> None:
+    """写入或更新 lottery_features 记录。"""
+
+    conn.execute(
+        text(
+            """
+            INSERT INTO lottery_features(period, feature_type, schema_version, feature_value, meta)
+            VALUES (:period, :feature_type, 1, :feature_value, :meta)
+            ON DUPLICATE KEY UPDATE
+                feature_value=VALUES(feature_value),
+                schema_version=VALUES(schema_version),
+                meta=VALUES(meta),
+                updated_at=NOW()
+            """
+        ),
+        {
+            "period": period,
+            "feature_type": feature_type,
+            "feature_value": json.dumps(payload),
+            "meta": json.dumps(meta),
+        },
+    )
+
+
+def _run_statistical_analysis(conn, payload: dict[str, Any]) -> int:
+    """生成频率/随机性/Markov 报告。"""
+
+    window = int(payload.get("window", 120))
+    report = build_statistical_report(conn, window)
+    meta = {"window": window, "source": "jobs_worker"}
+    period = report.get("period") or payload.get("period")
+    if not period:
+        raise ValueError("statistical analysis requires period")
+    _upsert_feature(conn, period, "frequency_analysis", report["frequency"], meta)
+    _upsert_feature(conn, period, "randomness_check", report["randomness"], meta)
+    _upsert_feature(conn, period, "markov_transition", report["markov"], meta)
+    summary = (
+        f"{period} freq_window={report['window']} chi={report['randomness'].get('chi_square', 0):.2f} "
+        f"runs={report['randomness'].get('runs', 0)}"
+    )
+    result = conn.execute(
+        text(
+            """
+            INSERT INTO analysis_results(analysis_type, schema_version, result_summary, result_data, metadata)
+            VALUES ('statistical_analysis', 1, :summary, :result_data, :metadata)
+            """
+        ),
+        {
+            "summary": summary[:255],
+            "result_data": json.dumps(report),
+            "metadata": json.dumps({**meta, "sequence": report.get("sequence")}),
+        },
+    )
+    return result.lastrowid
+
+
+def _run_strategy_backtest(conn, payload: dict[str, Any]) -> int:
+    """执行趋势策略回测并写入结果。"""
+
+    window = int(payload.get("window", 360))
+    short_window = int(payload.get("short_window", 12))
+    long_window = int(payload.get("long_window", 60))
+    stake = float(payload.get("stake", 1.0))
+    payout_multiplier = float(payload.get("payout_multiplier", 0.92))
+    result_payload = run_momentum_backtest(
+        conn,
+        window=window,
+        short_window=short_window,
+        long_window=long_window,
+        stake=stake,
+        payout_multiplier=payout_multiplier,
+    )
+    period = result_payload["period"]
+    _upsert_feature(
+        conn,
+        period,
+        "strategy_backtest",
+        {
+            "pnl": result_payload["pnl"],
+            "win_rate": result_payload["win_rate"],
+            "avg_return": result_payload["avg_return"],
+            "trades": result_payload["trades"],
+            "latest_signal": result_payload["equity_curve"][-1]["signal"] if result_payload["equity_curve"] else None,
+        },
+        {
+            "window": window,
+            "short_window": short_window,
+            "long_window": long_window,
+            "stake": stake,
+        },
+    )
+    summary = (
+        f"{period} backtest trades={result_payload['trades']} pnl={result_payload['pnl']:.2f} "
+        f"win_rate={result_payload['win_rate']:.2%}"
+    )
+    result = conn.execute(
+        text(
+            """
+            INSERT INTO analysis_results(analysis_type, schema_version, result_summary, result_data, metadata)
+            VALUES ('strategy_backtest', 1, :summary, :result_data, :metadata)
+            """
+        ),
+        {
+            "summary": summary[:255],
+            "result_data": json.dumps(result_payload),
+            "metadata": json.dumps(
+                {
+                    "window": window,
+                    "short_window": short_window,
+                    "long_window": long_window,
+                    "stake": stake,
+                    "payout_multiplier": payout_multiplier,
+                }
+            ),
+        },
+    )
+    return result.lastrowid
+
+
 JOB_HANDLERS: dict[str, JobHandler] = {
     "feature_extract": _extract_basic_features,
     "trend_summary": _generate_trend_summary,
+    "statistical_analysis": _run_statistical_analysis,
+    "strategy_backtest": _run_strategy_backtest,
 }
 
 
@@ -237,8 +360,26 @@ def handle_job(job: dict[str, Any]) -> bool:
             return False
 
 
-def run_worker(poll_interval: float = 2.0, batch_size: int = 10, once: bool = True) -> None:
-    """轮询执行待处理任务，可单次运行或常驻守护。"""
+def _process_job_async(job: dict[str, Any]) -> tuple[bool, float]:
+    """执行单个 job 并返回耗时。"""
+
+    start = time.perf_counter()
+    try:
+        result = handle_job(job)
+    except Exception:  # noqa: BLE001
+        logger.exception("job %s crashed", job["id"])
+        result = False
+    duration = time.perf_counter() - start
+    return result, duration
+
+
+def run_worker(
+    poll_interval: float = 2.0,
+    batch_size: int = 10,
+    once: bool = True,
+    max_workers: int = 4,
+) -> None:
+    """轮询执行待处理任务，支持线程池批处理。"""
 
     while True:
         jobs = fetch_pending_jobs(limit=batch_size)
@@ -250,19 +391,37 @@ def run_worker(poll_interval: float = 2.0, batch_size: int = 10, once: bool = Tr
 
         success = 0
         failure = 0
-        for job in jobs:
-            try:
-                if handle_job(job):
+        durations: list[float] = []
+        batch_start = time.perf_counter()
+
+        if max_workers <= 1 or len(jobs) == 1:
+            for job in jobs:
+                result, duration = _process_job_async(job)
+                durations.append(duration)
+                if result:
                     success += 1
                 else:
                     failure += 1
-            except SQLAlchemyError:
-                logger.exception("job %s failed due to database error", job["id"])
-                failure += 1
-            except Exception:
-                logger.exception("job %s failed", job["id"])
-                failure += 1
+        else:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {executor.submit(_process_job_async, job): job for job in jobs}
+                for future in as_completed(futures):
+                    job = futures[future]
+                    try:
+                        result, duration = future.result()
+                    except Exception as exc:  # noqa: BLE001
+                        logger.exception("job %s future failed: %s", job["id"], exc)
+                        failure += 1
+                        durations.append(0.0)
+                        continue
+                    durations.append(duration)
+                    if result:
+                        success += 1
+                    else:
+                        failure += 1
 
+        batch_latency = time.perf_counter() - batch_start
+        avg_duration = sum(durations) / len(durations) if durations else 0.0
         if success or failure:
             with session_scope() as conn:
                 record_pipeline_stat(
@@ -270,7 +429,15 @@ def run_worker(poll_interval: float = 2.0, batch_size: int = 10, once: bool = Tr
                     component="jobs_worker",
                     metric="batch_processed",
                     value=float(success),
-                    detail={"success": success, "failure": failure},
+                    detail={
+                        "success": success,
+                        "failure": failure,
+                        "batch_size": len(jobs),
+                        "avg_duration": avg_duration,
+                        "max_duration": max(durations) if durations else 0.0,
+                        "batch_latency": batch_latency,
+                        "parallelism": max_workers,
+                    },
                 )
 
         if once:

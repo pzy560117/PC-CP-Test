@@ -19,6 +19,13 @@
 - [x] 初始化 backend FastAPI 项目并接入数据库封装
 - [x] 指导 WSL 环境配置与 sudo/apt 初始化
 - [x] 分析抓包接口清单并输出排查建议
+- [x] 实现统计/状态转移分析模块并写入 analysis_results
+- [x] 优化 jobs_worker 批处理并加入线程池指标
+- [x] 新增特征/分析结果导出接口（JSON/CSV + 批量 period 查询）
+- [x] 上线分析图表与历史数据页面
+- [x] 构建策略回测模块并产出 strategy_backtest 结果
+- [x] 补充系统级自动化测试（统计/回测/API 导出）
+- [x] 编写 API 使用文档并更新 docs/
 
 ## 快速开始
 1. 安装依赖
