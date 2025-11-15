@@ -9,6 +9,8 @@ import os
 class Settings:
     mysql_dsn: str
     max_draws: int = 200
+    max_results: int = 200
+    max_jobs: int = 200
 
 
 def get_settings() -> Settings:
@@ -18,4 +20,6 @@ def get_settings() -> Settings:
     return Settings(
         mysql_dsn=os.environ.get("MYSQL_DSN", default_dsn),
         max_draws=int(os.environ.get("API_MAX_DRAWS", "200")),
+        max_results=int(os.environ.get("API_MAX_RESULTS", "200")),
+        max_jobs=int(os.environ.get("API_MAX_JOBS", "200")),
     )

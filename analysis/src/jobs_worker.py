@@ -1,30 +1,32 @@
-"""analysis_jobs worker：消费待处理任务并生成基础特征。"""
+"""analysis_jobs worker：消费待处理任务并生成多种特征/分析结果。"""
 from __future__ import annotations
 
 import json
 import logging
 import time
-from typing import Any
+from typing import Any, Callable
 
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
-from .database import session_scope
+from .database import record_pipeline_stat, session_scope
 
 logger = logging.getLogger(__name__)
 
+JobHandler = Callable[[Any, dict[str, Any]], int | None]
+
 
 def fetch_pending_jobs(limit: int = 20) -> list[dict[str, Any]]:
-    """拉取待处理的 analysis_jobs 任务。"""
+    """按 priority + created_at 拉取待处理任务。"""
 
     with session_scope() as conn:
         rows = conn.execute(
             text(
                 """
-                SELECT id, job_type, payload
+                SELECT id, job_type, payload, priority
                 FROM analysis_jobs
                 WHERE status='pending'
-                ORDER BY created_at ASC
+                ORDER BY priority ASC, created_at ASC
                 LIMIT :limit
                 """
             ),
@@ -34,7 +36,7 @@ def fetch_pending_jobs(limit: int = 20) -> list[dict[str, Any]]:
 
 
 def update_job_status(conn, job_id: int, status: str, result_id: int | None = None) -> None:
-    """更新任务状态，记录开始/结束时间。"""
+    """更新任务状态并记录时间。"""
 
     conn.execute(
         text(
@@ -53,8 +55,6 @@ def update_job_status(conn, job_id: int, status: str, result_id: int | None = No
 
 
 def _parse_payload(payload: Any) -> dict[str, Any]:
-    """将 payload 转换为字典。"""
-
     if isinstance(payload, str):
         return json.loads(payload)
     if isinstance(payload, dict):
@@ -62,9 +62,10 @@ def _parse_payload(payload: Any) -> dict[str, Any]:
     raise ValueError("payload must be JSON string or dict")
 
 
-def _extract_basic_features(conn, period: str) -> int:
-    """读取 lottery_draws 并落地基础特征与结果，返回 analysis_results.id。"""
+def _extract_basic_features(conn, payload: dict[str, Any]) -> int:
+    """写入 basic_stats 特征与 analysis_results。"""
 
+    period = payload["period"]
     row = conn.execute(
         text(
             """
@@ -98,45 +99,142 @@ def _extract_basic_features(conn, period: str) -> int:
     conn.execute(
         text(
             """
-            INSERT INTO lottery_features(period, feature_type, feature_value)
-            VALUES (:period, 'basic_stats', :feature_value)
-            ON DUPLICATE KEY UPDATE feature_value=:feature_value
+            INSERT INTO lottery_features(period, feature_type, schema_version, feature_value, meta)
+            VALUES (:period, 'basic_stats', 1, :feature_value, :meta)
+            ON DUPLICATE KEY UPDATE
+                feature_value=VALUES(feature_value),
+                schema_version=VALUES(schema_version),
+                meta=VALUES(meta),
+                updated_at=NOW()
             """
         ),
-        {"period": period, "feature_value": json.dumps(features)},
+        {
+            "period": period,
+            "feature_value": json.dumps(features),
+            "meta": json.dumps({"source": "jobs_worker", "version": 1}),
+        },
     )
 
+    summary = f"{period} sum={features['sum']} span={features['span']}"
     result = conn.execute(
         text(
             """
-            INSERT INTO analysis_results(analysis_type, result_data)
-            VALUES ('basic_feature', :result_data)
+            INSERT INTO analysis_results(analysis_type, schema_version, result_summary, result_data, metadata)
+            VALUES ('basic_feature', 1, :summary, :result_data, :metadata)
             """
         ),
-        {"result_data": json.dumps(features)},
+        {
+            "summary": summary[:255],
+            "result_data": json.dumps(features),
+            "metadata": json.dumps({"source": "jobs_worker", "version": 1}),
+        },
     )
     return result.lastrowid
 
 
-def handle_job(job: dict[str, Any]) -> None:
-    """消费单条任务，当前支持 feature_extract 基础特征。"""
+def _generate_trend_summary(conn, payload: dict[str, Any]) -> int:
+    """生成窗口内和值趋势 summary。"""
+
+    period = payload["period"]
+    window = int(payload.get("window", 20))
+    target = conn.execute(
+        text("SELECT draw_time FROM lottery_draws WHERE period=:period"),
+        {"period": period},
+    ).scalar()
+    if not target:
+        raise ValueError(f"period {period} not found for trend job")
+
+    rows = conn.execute(
+        text(
+            """
+            SELECT period, sum, draw_time
+            FROM lottery_draws
+            WHERE draw_time <= :target
+            ORDER BY draw_time DESC
+            LIMIT :window
+            """
+        ),
+        {"target": target, "window": window},
+    ).mappings().all()
+    if not rows:
+        raise ValueError(f"no rows for trend job period={period}")
+
+    sums = [row["sum"] for row in rows]
+    avg_sum = sum(sums) / len(sums)
+    trend = sums[0] - avg_sum
+    trend_payload = {
+        "period": period,
+        "window": window,
+        "count": len(sums),
+        "average_sum": avg_sum,
+        "latest_sum": sums[0],
+        "trend_delta": trend,
+    }
+
+    conn.execute(
+        text(
+            """
+            INSERT INTO lottery_features(period, feature_type, schema_version, feature_value, meta)
+            VALUES (:period, 'trend_summary', 1, :feature_value, :meta)
+            ON DUPLICATE KEY UPDATE
+                feature_value=VALUES(feature_value),
+                schema_version=VALUES(schema_version),
+                meta=VALUES(meta),
+                updated_at=NOW()
+            """
+        ),
+        {
+            "period": period,
+            "feature_value": json.dumps(trend_payload),
+            "meta": json.dumps({"window": window, "version": 1}),
+        },
+    )
+
+    summary = f"{period} trendΔ={trend:.2f} (window={len(sums)})"
+    result = conn.execute(
+        text(
+            """
+            INSERT INTO analysis_results(analysis_type, schema_version, result_summary, result_data, metadata)
+            VALUES ('trend_summary', 1, :summary, :result_data, :metadata)
+            """
+        ),
+        {
+            "summary": summary[:255],
+            "result_data": json.dumps(trend_payload),
+            "metadata": json.dumps({"window": window, "version": 1}),
+        },
+    )
+    return result.lastrowid
+
+
+JOB_HANDLERS: dict[str, JobHandler] = {
+    "feature_extract": _extract_basic_features,
+    "trend_summary": _generate_trend_summary,
+}
+
+
+def handle_job(job: dict[str, Any]) -> bool:
+    """消费单条任务并返回是否成功。"""
 
     payload = _parse_payload(job["payload"])
     job_type = job["job_type"]
     job_id = job["id"]
 
+    handler = JOB_HANDLERS.get(job_type)
+    if not handler:
+        logger.error("unsupported job_type %s (id=%s)", job_type, job_id)
+        return False
+
     with session_scope() as conn:
         update_job_status(conn, job_id, "processing")
         try:
-            if job_type == "feature_extract":
-                result_id = _extract_basic_features(conn, payload["period"])
-                update_job_status(conn, job_id, "finished", result_id=result_id)
-            else:
-                raise ValueError(f"unsupported job_type {job_type}")
+            result_id = handler(conn, payload)
+            update_job_status(conn, job_id, "finished", result_id=result_id)
+            return True
         except Exception as exc:  # noqa: BLE001
             logger.exception("job %s failed: %s", job_id, exc)
             update_job_status(conn, job_id, "failed")
-            raise
+            return False
 
 
 def run_worker(poll_interval: float = 2.0, batch_size: int = 10, once: bool = True) -> None:
@@ -150,13 +248,30 @@ def run_worker(poll_interval: float = 2.0, batch_size: int = 10, once: bool = Tr
             time.sleep(poll_interval)
             continue
 
+        success = 0
+        failure = 0
         for job in jobs:
             try:
-                handle_job(job)
+                if handle_job(job):
+                    success += 1
+                else:
+                    failure += 1
             except SQLAlchemyError:
                 logger.exception("job %s failed due to database error", job["id"])
+                failure += 1
             except Exception:
                 logger.exception("job %s failed", job["id"])
+                failure += 1
+
+        if success or failure:
+            with session_scope() as conn:
+                record_pipeline_stat(
+                    conn,
+                    component="jobs_worker",
+                    metric="batch_processed",
+                    value=float(success),
+                    detail={"success": success, "failure": failure},
+                )
 
         if once:
             return

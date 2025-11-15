@@ -8,7 +8,7 @@ import json
 
 from sqlalchemy import text
 
-from .database import insert_validated_draw, session_scope
+from .database import insert_validated_draw, record_pipeline_stat, session_scope
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +78,8 @@ def run_validation() -> None:
         logger.info("no pending raw draws")
         return
 
+    processed = 0
+    failed = 0
     with session_scope() as conn:
         for row in pending:
             payload = row["payload"]
@@ -88,11 +90,23 @@ def run_validation() -> None:
                     text("UPDATE raw_lottery_draws SET status='failed' WHERE id=:id"),
                     {"id": row["id"]},
                 )
+                failed += 1
                 continue
             insert_validated_draw(conn, transform_payload(payload))
             conn.execute(
                 text("UPDATE raw_lottery_draws SET status='passed' WHERE id=:id"),
                 {"id": row["id"]},
+            )
+            processed += 1
+
+    if processed or failed:
+        with session_scope() as conn:
+            record_pipeline_stat(
+                conn,
+                component="validator",
+                metric="batch_processed",
+                value=float(processed),
+                detail={"processed": processed, "failed": failed},
             )
 
 
