@@ -1,0 +1,46 @@
+# 腾讯分分彩公式搜索自动化工具 - 依赖包
+
+# 核心依赖
+requests==2.31.0
+beautifulsoup4==4.12.2
+lxml==4.9.3
+
+# Windows 桌面自动化
+pywinauto==0.6.8
+pyautogui==0.9.54
+
+# 数据处理
+pandas==2.1.3
+numpy==1.25.2
+openpyxl==3.1.2
+
+# 配置和日志
+pyyaml==6.0.1
+python-dotenv==1.0.0
+
+# 时间处理
+python-dateutil==2.8.2
+pytz==2023.3
+
+# 图像处理（用于元素识别）
+pillow==10.0.1
+opencv-python==4.8.1.78
+
+# 测试框架
+pytest==7.4.3
+pytest-cov==4.1.0
+pytest-mock==3.12.0
+
+# 代码质量
+flake8==6.1.0
+black==23.10.1
+isort==5.12.0
+
+# 性能监控
+psutil==5.9.6
+memory-profiler==0.61.0
+
+# 其他工具
+click==8.1.7
+tqdm==4.66.1
+colorama==0.4.6

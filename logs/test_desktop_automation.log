@@ -1,0 +1,130 @@
+2025-11-22 22:13:32,242 - AppLauncher - INFO - 正在启动目标应用: D:\software\CpzyrjCom.exe
+2025-11-22 22:14:02,264 - AppLauncher - INFO - 应用启动等待完成，后续将进行界面导航。
+2025-11-22 22:14:02,264 - WindowManager - INFO - 正在查找窗口: 奇趣腾讯分分彩
+2025-11-22 22:19:47,917 - AppLauncher - INFO - 正在启动目标应用: D:\software\CpzyrjCom.exe
+2025-11-22 22:20:17,939 - AppLauncher - INFO - 应用启动等待完成，后续将进行界面导航。
+2025-11-22 22:20:17,939 - WindowManager - INFO - 正在查找窗口: 众赢国际版
+2025-11-22 22:20:18,181 - WindowManager - INFO - 成功连接到窗口: 众赢国际版 www.zygjb.com
+2025-11-22 22:20:18,183 - WindowManager - INFO - 窗口已激活并前置
+2025-11-22 22:20:18,183 - WindowManager - INFO - 等待窗口就绪...
+2025-11-22 22:20:18,184 - WindowManager - INFO - 窗口已就绪
+2025-11-22 22:20:18,185 - AppAutomator - INFO - 自动化流程未运行，无需停止。
+2025-11-22 22:20:24,262 - AppLauncher - INFO - 正在启动目标应用: D:\software\CpzyrjCom.exe
+2025-11-22 22:20:54,285 - AppLauncher - INFO - 应用启动等待完成，后续将进行界面导航。
+2025-11-22 22:20:54,285 - WindowManager - INFO - 正在查找窗口: 众赢国际版
+2025-11-22 22:20:54,511 - WindowManager - INFO - 成功连接到窗口: 众赢国际版 www.zygjb.com
+2025-11-22 22:20:54,512 - WindowManager - INFO - 窗口已激活并前置
+2025-11-22 22:20:54,512 - WindowManager - INFO - 等待窗口就绪...
+2025-11-22 22:20:54,512 - WindowManager - INFO - 窗口已就绪
+2025-11-22 22:20:54,512 - SearchConfigurator - INFO - 开始配置搜索参数...
+2025-11-22 22:20:54,635 - SearchConfigurator - WARNING - 未找到输入框: 搜索公式数量，尝试通过位置定位
+2025-11-22 22:20:54,725 - SearchConfigurator - WARNING - 未找到输入框: 数据期数，尝试通过位置定位
+2025-11-22 22:20:54,825 - SearchConfigurator - WARNING - 未找到输入框: 定码个数，尝试通过位置定位
+2025-11-22 22:20:54,913 - SearchConfigurator - WARNING - 未找到输入框: 计划周期，尝试通过位置定位
+2025-11-22 22:20:55,001 - SearchConfigurator - WARNING - 未找到准确率配置控件
+2025-11-22 22:20:55,001 - SearchConfigurator - INFO - 搜索参数配置完成
+2025-11-22 22:20:55,001 - AppAutomator - INFO - 自动化流程未运行，无需停止。
+2025-11-22 22:21:07,084 - AppAutomator - INFO - 开始自动化流程，dry_run=False, use_desktop_automation=True
+2025-11-22 22:21:07,084 - AppAutomator - INFO - 搜索参数：公式=100，数据期数=200，定码=5，计划周期=1，最低准确率=57%
+2025-11-22 22:21:07,084 - AppAutomator - INFO - 最大结果条数：5
+2025-11-22 22:21:07,084 - AppLauncher - INFO - 正在启动目标应用: D:\software\CpzyrjCom.exe
+2025-11-22 22:21:37,108 - AppLauncher - INFO - 应用启动等待完成，后续将进行界面导航。
+2025-11-22 22:21:37,108 - AppAutomator - INFO - 目标应用启动完成
+2025-11-22 22:21:37,108 - AppAutomator - INFO - 步骤1: 连接到应用窗口...
+2025-11-22 22:21:37,108 - WindowManager - INFO - 正在查找窗口: 众赢国际版
+2025-11-22 22:21:37,346 - WindowManager - INFO - 成功连接到窗口: 众赢国际版 www.zygjb.com
+2025-11-22 22:21:37,347 - WindowManager - INFO - 窗口已激活并前置
+2025-11-22 22:21:37,347 - WindowManager - INFO - 等待窗口就绪...
+2025-11-22 22:21:37,348 - WindowManager - INFO - 窗口已就绪
+2025-11-22 22:21:37,348 - AppAutomator - INFO - 步骤2: 初始化搜索组件...
+2025-11-22 22:21:37,348 - AppAutomator - INFO - 步骤3: 配置搜索参数...
+2025-11-22 22:21:37,348 - SearchConfigurator - INFO - 开始配置搜索参数...
+2025-11-22 22:21:37,437 - SearchConfigurator - WARNING - 未找到输入框: 搜索公式数量，尝试通过位置定位
+2025-11-22 22:21:37,524 - SearchConfigurator - WARNING - 未找到输入框: 数据期数，尝试通过位置定位
+2025-11-22 22:21:37,621 - SearchConfigurator - WARNING - 未找到输入框: 定码个数，尝试通过位置定位
+2025-11-22 22:21:37,713 - SearchConfigurator - WARNING - 未找到输入框: 计划周期，尝试通过位置定位
+2025-11-22 22:21:37,802 - SearchConfigurator - WARNING - 未找到准确率配置控件
+2025-11-22 22:21:37,802 - SearchConfigurator - INFO - 搜索参数配置完成
+2025-11-22 22:21:37,802 - AppAutomator - INFO - 步骤4: 执行搜索...
+2025-11-22 22:21:37,802 - SearchExecutor - INFO - 开始执行搜索...
+2025-11-22 22:25:40,429 - AppLauncher - INFO - 正在启动目标应用: D:\software\CpzyrjCom.exe
+2025-11-22 22:26:10,452 - AppLauncher - INFO - 应用启动等待完成，后续将进行界面导航。
+2025-11-22 22:26:10,454 - WindowManager - INFO - 正在查找窗口: 众赢国际版
+2025-11-22 22:26:10,690 - WindowManager - INFO - 成功连接到窗口: 众赢国际版 www.zygjb.com
+2025-11-22 22:26:10,690 - WindowManager - INFO - 窗口已激活并前置
+2025-11-22 22:26:10,691 - WindowManager - INFO - 等待窗口就绪...
+2025-11-22 22:26:10,691 - WindowManager - INFO - 窗口已就绪
+2025-11-22 22:26:10,691 - AppAutomator - INFO - 自动化流程未运行，无需停止。
+2025-11-22 22:26:17,365 - AppLauncher - INFO - 正在启动目标应用: D:\software\CpzyrjCom.exe
+2025-11-22 22:26:47,386 - AppLauncher - INFO - 应用启动等待完成，后续将进行界面导航。
+2025-11-22 22:26:47,386 - WindowManager - INFO - 正在查找窗口: 众赢国际版
+2025-11-22 22:26:47,622 - WindowManager - INFO - 成功连接到窗口: 众赢国际版 www.zygjb.com
+2025-11-22 22:26:47,623 - WindowManager - INFO - 窗口已激活并前置
+2025-11-22 22:26:47,623 - WindowManager - INFO - 等待窗口就绪...
+2025-11-22 22:26:47,624 - WindowManager - INFO - 窗口已就绪
+2025-11-22 22:26:47,624 - SearchConfigurator - INFO - 开始配置搜索参数...
+2025-11-22 22:26:47,720 - SearchConfigurator - WARNING - 未找到输入框: 搜索公式数量，尝试通过位置定位
+2025-11-22 22:26:47,812 - SearchConfigurator - WARNING - 未找到输入框: 数据期数，尝试通过位置定位
+2025-11-22 22:26:47,912 - SearchConfigurator - WARNING - 未找到输入框: 定码个数，尝试通过位置定位
+2025-11-22 22:26:48,002 - SearchConfigurator - WARNING - 未找到输入框: 计划周期，尝试通过位置定位
+2025-11-22 22:26:48,095 - SearchConfigurator - WARNING - 未找到准确率配置控件
+2025-11-22 22:26:48,095 - SearchConfigurator - INFO - 搜索参数配置完成
+2025-11-22 22:26:48,095 - AppAutomator - INFO - 自动化流程未运行，无需停止。
+2025-11-22 22:26:52,163 - AppAutomator - INFO - 开始自动化流程，dry_run=False, use_desktop_automation=True
+2025-11-22 22:26:52,163 - AppAutomator - INFO - 搜索参数：公式=100，数据期数=200，定码=5，计划周期=1，最低准确率=57%
+2025-11-22 22:26:52,163 - AppAutomator - INFO - 最大结果条数：5
+2025-11-22 22:26:52,164 - AppLauncher - INFO - 正在启动目标应用: D:\software\CpzyrjCom.exe
+2025-11-22 22:27:22,184 - AppLauncher - INFO - 应用启动等待完成，后续将进行界面导航。
+2025-11-22 22:27:22,184 - AppAutomator - INFO - 目标应用启动完成
+2025-11-22 22:27:22,184 - AppAutomator - INFO - 步骤1: 连接到应用窗口...
+2025-11-22 22:27:22,184 - WindowManager - INFO - 正在查找窗口: 众赢国际版
+2025-11-22 22:27:22,352 - WindowManager - INFO - 成功连接到窗口: 众赢国际版 www.zygjb.com
+2025-11-22 22:27:22,357 - WindowManager - INFO - 窗口已激活并前置
+2025-11-22 22:27:22,358 - WindowManager - INFO - 等待窗口就绪...
+2025-11-22 22:27:22,358 - WindowManager - INFO - 窗口已就绪
+2025-11-22 22:27:22,359 - AppAutomator - INFO - 步骤2: 初始化搜索组件...
+2025-11-22 22:27:22,359 - AppAutomator - INFO - 步骤3: 导航到搜索公式界面...
+2025-11-22 22:27:22,359 - Navigator - INFO - 开始导航到搜索公式界面...
+2025-11-22 22:27:22,359 - Navigator - INFO - 查找并点击标签页: 腾讯分分彩
+2025-11-22 22:32:20,129 - AppLauncher - INFO - 正在启动目标应用: D:\software\CpzyrjCom.exe
+2025-11-22 22:32:50,151 - AppLauncher - INFO - 应用启动等待完成，后续将进行界面导航。
+2025-11-22 22:32:50,152 - WindowManager - INFO - 正在查找窗口: 众赢国际版
+2025-11-22 22:32:50,386 - WindowManager - INFO - 成功连接到窗口: 众赢国际版 www.zygjb.com
+2025-11-22 22:32:50,388 - WindowManager - INFO - 窗口已激活并前置
+2025-11-22 22:32:50,388 - WindowManager - INFO - 等待窗口就绪...
+2025-11-22 22:32:50,388 - WindowManager - INFO - 窗口已就绪
+2025-11-22 22:32:50,389 - AppAutomator - INFO - 自动化流程未运行，无需停止。
+2025-11-22 22:32:56,455 - AppLauncher - INFO - 正在启动目标应用: D:\software\CpzyrjCom.exe
+2025-11-22 22:33:26,479 - AppLauncher - INFO - 应用启动等待完成，后续将进行界面导航。
+2025-11-22 22:33:26,479 - WindowManager - INFO - 正在查找窗口: 众赢国际版
+2025-11-22 22:33:26,707 - WindowManager - INFO - 成功连接到窗口: 众赢国际版 www.zygjb.com
+2025-11-22 22:33:26,708 - WindowManager - INFO - 窗口已激活并前置
+2025-11-22 22:33:26,708 - WindowManager - INFO - 等待窗口就绪...
+2025-11-22 22:33:26,709 - WindowManager - INFO - 窗口已就绪
+2025-11-22 22:33:26,709 - SearchConfigurator - INFO - 开始配置搜索参数...
+2025-11-22 22:33:26,798 - SearchConfigurator - WARNING - 未找到输入框: 搜索公式数量，尝试通过位置定位
+2025-11-22 22:33:26,883 - SearchConfigurator - WARNING - 未找到输入框: 数据期数，尝试通过位置定位
+2025-11-22 22:33:26,981 - SearchConfigurator - WARNING - 未找到输入框: 定码个数，尝试通过位置定位
+2025-11-22 22:33:27,066 - SearchConfigurator - WARNING - 未找到输入框: 计划周期，尝试通过位置定位
+2025-11-22 22:33:27,155 - SearchConfigurator - WARNING - 未找到准确率配置控件
+2025-11-22 22:33:27,155 - SearchConfigurator - INFO - 搜索参数配置完成
+2025-11-22 22:33:27,155 - AppAutomator - INFO - 自动化流程未运行，无需停止。
+2025-11-22 22:33:31,519 - AppAutomator - INFO - 开始自动化流程，dry_run=False, use_desktop_automation=True
+2025-11-22 22:33:31,519 - AppAutomator - INFO - 搜索参数：公式=100，数据期数=200，定码=5，计划周期=1，最低准确率=57%
+2025-11-22 22:33:31,519 - AppAutomator - INFO - 最大结果条数：5
+2025-11-22 22:33:31,519 - AppLauncher - INFO - 正在启动目标应用: D:\software\CpzyrjCom.exe
+2025-11-22 22:34:01,541 - AppLauncher - INFO - 应用启动等待完成，后续将进行界面导航。
+2025-11-22 22:34:01,541 - AppAutomator - INFO - 目标应用启动完成
+2025-11-22 22:34:01,541 - AppAutomator - INFO - 步骤1: 连接到应用窗口...
+2025-11-22 22:34:01,541 - WindowManager - INFO - 正在查找窗口: 众赢国际版
+2025-11-22 22:34:01,764 - WindowManager - INFO - 成功连接到窗口: 众赢国际版 www.zygjb.com
+2025-11-22 22:34:01,765 - WindowManager - INFO - 窗口已激活并前置
+2025-11-22 22:34:01,765 - WindowManager - INFO - 等待窗口就绪...
+2025-11-22 22:34:01,766 - WindowManager - INFO - 窗口已就绪
+2025-11-22 22:34:01,766 - AppAutomator - INFO - 步骤2: 初始化搜索组件...
+2025-11-22 22:34:01,766 - AppAutomator - INFO - 步骤3: 导航到搜索公式界面...
+2025-11-22 22:34:01,766 - Navigator - INFO - 开始导航到搜索公式界面...
+2025-11-22 22:34:01,766 - Navigator - INFO - 查找并点击标签页: 腾讯分分彩
+2025-11-22 22:34:02,073 - Navigator - ERROR - 未找到标签页: 腾讯分分彩
+2025-11-22 22:34:02,074 - Navigator - ERROR - 正在列出所有可能的控件...
+2025-11-22 22:34:02,261 - Navigator - ERROR - 前50个控件: RadioButton: '时时彩', Text: '时时彩', RadioButton: '区块链彩', Text: '区块链彩', RadioButton: 'PK6', Text: 'PK6', RadioButton: 'PK10', Text: 'PK10', RadioButton: '快三', Text: '快三', RadioButton: '11选5', Text: '11选5', RadioButton: 'VR彩', Text: 'VR彩', RadioButton: '六合彩', Text: '六合彩', Group: '时时彩', ListItem: 'kwBasety.Classs.SgameBoxItem', ListItem: 'kwBasety.Classs.SgameBoxItem', ListItem: 'kwBasety.Classs.SgameBoxItem'

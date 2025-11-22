@@ -1,93 +1,262 @@
-﻿# 项目说明
+# 腾讯分分彩公式搜索自动化工具
 
-## 任务列表
-- [ ] 初始化标准化文档（docs/）
-- [ ] 填写 CLAUDE.md 模块信息
-- [ ] 配置 Jest 与 ESLint
-- [ ] 运行 `/start` `/next` `/update-status` `/progress`
-- [x] 再次验证采集→校验→落库闭环并记录库内样本
-- [x] 补充分析结果/特征 API 并完成 FastAPI 联调
-- [x] 验证 jobs_worker 批处理 analysis_jobs 队列状态
-- [x] 重写 AGENTS.md 文档，补充概述/运行指南/目录路由/API/技术栈说明（pnpm 规范）
-- [x] 应用 ddl.sql，跑通采集→校验→API 验证数据可读
-- [x] 增强采集节流/重试并新增 analysis_jobs worker 入池特征
-- [x] 评估后端 TypeScript 方案现状
-- [x] 根据个人自用需求更新后端 Python 架构文档
-- [x] 强调数据分析核心地位并更新相关文档
-- [x] 落地数据采集流程与表结构依赖，并同步项目状态
-- [x] 创建 analysis/src 采集与校验脚本骨架及验证指南
-- [x] 初始化 backend FastAPI 项目并接入数据库封装
-- [x] 指导 WSL 环境配置与 sudo/apt 初始化
-- [x] 分析抓包接口清单并输出排查建议
-- [x] 实现统计/状态转移分析模块并写入 analysis_results
-- [x] 优化 jobs_worker 批处理并加入线程池指标
-- [x] 新增特征/分析结果导出接口（JSON/CSV + 批量 period 查询）
-- [x] 上线分析图表与历史数据页面
-- [x] 构建策略回测模块并产出 strategy_backtest 结果
-- [x] 补充系统级自动化测试（统计/回测/API 导出）
-- [x] 编写 API 使用文档并更新 docs/
+## 项目简介
 
-## 快速开始
-1. 安装依赖
-   ```bash
-   pip install -r analysis/requirements.txt
-   pip install -r backend/requirements.txt
+本项目是一个自动化工具，用于搜索腾讯分分彩的公式并分析结果。该工具能够自动启动目标应用，导航到公式搜索界面，设置搜索参数，执行搜索并提取结果，然后将搜索结果与历史数据进行对比分析。
+
+## 功能特点
+
+- 自动启动和导航目标应用
+- 自动配置搜索参数
+- 执行公式搜索并提取结果
+- 获取历史开奖数据
+- 对比分析搜索结果与历史数据
+- 支持循环执行和错误恢复
+- 详细的日志记录和状态监控
+
+## 当前任务清单
+
+1. ✅ 实现数据/API 模块：开奖 API 客户端、数据处理、号码对比能力
+2. ✅ 串联 AppAutomator 与新模块，完善 dry run 与真实执行路径
+3. ✅ 更新 README 与 progress 文档，补充测试/验证记录（迭代二定位桌面应用自动化）
+4. ✅ 推进迭代二（桌面应用自动化与搜索功能）- 已完成核心模块开发（2025-11-22）
+5. ✅ 校验迭代一内容更新并同步 progress 文档（2025-11-22）
+6. ✅ 修复推荐号统计提取路径，新增控件正则/OCR/表格统计多层兜底（2025-11-22）
+7. ✅ 增强开奖数据获取，支持HTML解析回退，等待API恢复（2025-11-23）
+
+## 系统要求
+
+- Windows 10/11 操作系统
+- Python 3.8 或更高版本
+- 奇趣腾讯分分彩桌面应用程序
+- 至少 4GB RAM
+- 至少 1GB 可用磁盘空间
+
+## 安装步骤
+
+1. 克隆或下载项目代码
+2. 安装依赖包：
    ```
-2. 配置环境变量（默认 MySQL 密码 560117）：
-   ```bash
-   set MYSQL_DSN=mysql+pymysql://root:560117@localhost:3306/lottery
-   set TXFF_HISTORY_ENDPOINT=https://kjapi.com/hall/hallhistory/txffcqiqu/ksffc
-   set TXFF_LATEST_ENDPOINT=https://kjapi.com/hallhistoryDetail/txffcqiqu
-   set COLLECT_LATEST_ENABLED=false
-   set COLLECT_MONITORING_ENABLED=true
-   set API_MAX_RESULTS=200
-   set API_MAX_JOBS=200
-   set CACHE_TTL_SECONDS=30
-   # 如需启用 Redis 缓存
-   set REDIS_URL=redis://localhost:6379/0
-   # 调度/告警
-   set SCHED_COLLECTOR_INTERVAL=300
-   set SCHED_VALIDATOR_INTERVAL=120
-   set SCHED_WORKER_INTERVAL=60
-   set SCHED_ALERT_WINDOW=5
-   set SCHED_ALERT_THRESHOLD=3
-   set SCHED_ALERT_COOLDOWN=300
+   pip install -r requirements.txt
    ```
-3. 执行数据库 DDL（参见 `docs/技术架构.md` 第 3 章）创建 raw/lottery/validation/analysis_jobs 表。
-4. 运行采集与校验脚本：
-   ```bash
-   python -m analysis.src.collector
-   python -m analysis.src.validator
+3. 安装目标桌面应用（奇趣腾讯分分彩）
+4. 配置 `config/config.json` 文件，设置必要的参数（特别是 `target_app.executable_path` 和 `target_app.window_title`）
+5. 运行应用程序：
    ```
-5. 启动 FastAPI：
-   ```bash
-   uvicorn backend.app.main:app --reload
-   ```
-6. 运行测试：
-   ```bash
-   pytest analysis/tests
-   ```
-7. 启动调度与告警：
-   ```bash
-   python -m analysis.src.scheduler --run-forever
-   # 调试模式（单次运行/模拟失败）
-   python -m analysis.src.scheduler --iterations 1 --simulate-failure collector
+   python main.py
    ```
 
-## 前端仪表盘（frontend/）
+## 配置说明
 
-1. 复制环境变量：
-   ```bash
-   cd frontend
-   cp .env.example .env.local  # 根据需要修改 VITE_API_BASE_URL（默认 http://localhost:8000）
+应用程序的主要配置文件是 `config/config.json`，包含以下配置项：
+
+- **目标应用配置**：应用名称、可执行文件路径、窗口标题等
+- **搜索配置**：公式数量、数据期数、定码个数、准确率阈值、搜索超时等
+- **API配置**：API地址、请求头、速率限制等
+- **推荐数据配置**：推荐号码源文件路径、编码格式、最大记录数等
+- **数据配置**：存储路径、缓存设置、保留天数等
+- **日志配置**：日志级别、文件路径、滚动设置等
+- **循环配置**：循环间隔、最大迭代次数、错误阈值等
+
+## 使用说明
+
+### 基本使用
+
+1. 准备推荐号码源文件 `./data/recommendations.txt`：每行 5 个数字（0-9）组成的推荐号，空格或逗号分隔，支持以 `#` 开头的注释；工具按 `recommendation.max_records` 读取。
+2. 启动应用程序：
    ```
-2. 安装依赖并启动开发服务器：
-   ```bash
-   pnpm install
-   pnpm dev
+   python main.py
    ```
-3. 生产构建：
-   ```bash
-   pnpm build
-   ```
-   > 说明：目前 `vite@7` 官方建议 Node.js ≥ 20.19，若本地 Node 18.* 可能出现 Warning，功能仍可使用，建议后续升级 Node。
+3. 应用程序将自动执行以下步骤：
+   - 启动目标应用（真实运行）或仅校验配置（dry-run）
+   - 读取搜索参数、推荐号配置及 API 信息
+   - 调用 `LotteryApiClient` 获取最新一期开奖号码
+   - 使用 `RecommendationProcessor` 清洗推荐号并与开奖号码对比
+   - 记录对比详情与命中情况至 `./data/results/comparison_history.jsonl` 与 `latest_comparison.json`
+   - 输出日志，便于 dry-run/真实流程快速比对推荐与开奖结果
+
+### 命令行参数
+
+应用程序支持以下命令行参数：
+
+- `--config`：指定配置文件路径
+- `--headless`：启用无头模式（不显示浏览器窗口）
+- `--loop`：启用循环执行模式
+- `--interval`：设置循环执行间隔（秒）
+- `--log-level`：设置日志级别（DEBUG, INFO, WARNING, ERROR）
+- `--help`：显示帮助信息
+
+示例：
+```
+python main.py --headless --loop --interval 600 --log-level DEBUG
+```
+
+### 配置文件示例
+
+```json
+{
+  "app": {
+    "name": "腾讯分分彩公式搜索自动化工具",
+    "version": "1.0.0"
+  },
+  "browser": {
+    "type": "chrome",
+    "headless": false,
+    "window_size": {
+      "width": 1280,
+      "height": 720
+    }
+  },
+  "target_app": {
+    "name": "奇趣腾讯分分彩",
+    "executable_path": "C:\\path\\to\\app.exe"
+  },
+  "search": {
+    "formula_count": 10,
+    "data_periods": 100,
+    "search_timeout": 300
+  },
+  "loop": {
+    "enabled": true,
+    "interval": 300,
+    "max_iterations": 0
+  }
+}
+```
+
+## 项目结构
+
+```
+PC-Test/
+├── main.py                     # 应用程序入口点
+├── requirements.txt            # 项目依赖
+├── README.md                   # 项目说明文档
+├── CLAUDE.md                   # AI代理开发规则
+├── config/                     # 配置文件目录
+│   ├── settings.py            # 应用程序设置
+│   └── config.json            # 配置文件
+├── memory-bank/               # 项目记忆库
+│   ├── game-design-document.md  # 项目设计文档
+│   ├── tech-stack.md          # 技术栈文档
+│   ├── implementation-plan.md  # 实施计划
+│   ├── architecture.md        # 架构文档
+│   └── progress.md            # 进度跟踪
+├── src/                       # 源代码目录
+│   ├── automator/             # 自动化模块
+│   ├── data/                  # 数据处理模块
+│   ├── api/                   # API接口模块
+│   ├── exception/             # 异常处理模块
+│   └── utils/                 # 工具模块
+├── tests/                     # 测试目录
+├── logs/                      # 日志目录
+└── data/                      # 数据目录
+```
+
+## 开发指南
+
+### 环境搭建
+
+1. 安装 Python 3.8 或更高版本
+2. 安装依赖包：`pip install -r requirements.txt`
+3. 安装开发工具：`pip install -r requirements-dev.txt`（如果有）
+4. 配置 IDE（推荐使用 PyCharm 或 VSCode）
+
+### 代码规范
+
+项目遵循以下代码规范：
+
+- 使用 PEP 8 代码风格
+- 使用 Black 进行代码格式化
+- 使用 isort 进行导入排序
+- 使用 flake8 进行代码检查
+- 编写单元测试和集成测试
+
+### 测试
+
+运行测试：
+```
+pytest tests/
+```
+
+运行测试并生成覆盖率报告：
+```
+pytest --cov=src tests/
+```
+
+## 故障排除
+
+### 常见问题
+
+1. **浏览器启动失败**
+   - 检查 ChromeDriver 是否正确安装
+   - 确认 Chrome 浏览器版本与 ChromeDriver 版本匹配
+   - 检查浏览器配置是否正确
+
+2. **目标应用启动失败**
+   - 检查应用路径是否正确
+   - 确认应用是否已正确安装
+   - 检查应用权限设置
+
+3. **元素定位失败**
+   - 检查应用界面是否有变化
+   - 增加元素等待时间
+   - 更新元素定位策略
+
+4. **API请求失败**
+   - 检查网络连接
+   - 确认API地址和参数是否正确
+   - 检查API访问限制
+
+### 日志分析
+
+应用程序会生成详细的日志记录，可以通过以下方式分析问题：
+
+1. 查看 `logs/app.log` 文件
+2. 根据日志级别过滤信息
+3. 搜索错误和警告信息
+4. 分析操作时间线和状态变化
+
+## 贡献指南
+
+欢迎提交问题报告和功能请求。如果您想贡献代码，请遵循以下步骤：
+
+1. Fork 项目仓库
+2. 创建功能分支：`git checkout -b feature/new-feature`
+3. 提交更改：`git commit -am 'Add new feature'`
+4. 推送分支：`git push origin feature/new-feature`
+5. 提交拉取请求
+
+## 许可证
+
+本项目采用 MIT 许可证。详情请参阅 LICENSE 文件。
+
+## 联系方式
+
+如有问题或建议，请通过以下方式联系：
+
+- 邮箱：your-email@example.com
+- 项目地址：https://github.com/your-username/pc-test
+
+## 更新日志
+
+### v1.1.0 (2025-11-22)
+
+- ✅ 实现迭代二：桌面应用自动化功能
+- ✅ 新增 WindowManager：负责窗口查找、连接和激活
+- ✅ 新增 SearchConfigurator：负责配置搜索参数
+- ✅ 新增 SearchExecutor：负责执行搜索和提取结果
+- ✅ 集成 pywinauto 和 pyautogui 实现 Windows 桌面自动化
+- ✅ 支持从桌面应用直接搜索公式并提取推荐号码
+- ✅ 完善桌面自动化流程：连接窗口->配置参数->执行搜索->提取结果->对比分析
+
+### v1.0.0 (2023-11-01)
+
+- 初始版本发布
+- 实现基本的自动化功能
+- 支持搜索参数配置和结果提取
+- 支持历史数据获取和对比分析
+- 支持循环执行和错误恢复
+
+---
+
+**注意**：本工具仅供学习和研究使用，请遵守相关法律法规和使用条款。

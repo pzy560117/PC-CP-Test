@@ -1,0 +1,147 @@
+{
+  "app": {
+    "name": "腾讯分分彩公式搜索自动化工具",
+    "version": "1.0.0",
+    "description": "自动化搜索腾讯分分彩公式并分析结果的工具",
+    "author": "AI Assistant",
+    "timeout": 30,
+    "retry_count": 3,
+    "retry_delay": 5
+  },
+  "browser": {
+    "type": "chrome",
+    "headless": false,
+    "window_size": {
+      "width": 1280,
+      "height": 720
+    },
+    "page_load_timeout": 30,
+    "element_wait_timeout": 10,
+    "implicit_wait": 5,
+    "options": [
+      "--disable-infobars",
+      "--disable-extensions",
+      "--disable-gpu",
+      "--no-sandbox"
+    ]
+  },
+  "target_app": {
+    "name": "奇趣腾讯分分彩",
+    "executable_path": "D:/software/CpzyrjCom.exe",
+    "window_title": "奇趣腾讯分分彩",
+    "launch_timeout": 30,
+    "startup_wait_seconds": 30,
+    "skip_app_launch": true,
+    "skip_navigation": true,
+    "skip_parameter_config": true,
+    "elements": {
+      "lottery_tab": "时时彩",
+      "search_tab": "公式搜索",
+      "search_button": "搜索",
+      "clear_button": "清除",
+      "stop_button": "停止",
+      "result_table": "搜索结果"
+    }
+  },
+  "search": {
+    "formula_count": 100,
+    "data_periods": 200,
+    "fixed_code_count": 5,
+    "plan_cycle": 1,
+    "min_accuracy": 57,
+    "search_timeout": 300,
+    "result_wait_timeout": 60,
+    "max_results": 5,
+    "parameters": {
+      "formula_type": "自定义",
+      "data_source": "历史数据",
+      "analysis_method": "统计分析"
+    }
+  },
+  "api": {
+    "links_file": "d:/PC-Test/docs/链接.md",
+    "base_url": "https://kjapi.com",
+    "endpoints": {
+      "history_data": "/hall/hallhistory/txffcqiqu/ksffc",
+      "date_data": "/hallhistoryDetail/txffcqiqu/{date}"
+    },
+    "timeout": 10,
+    "headers": {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+      "Accept": "application/json",
+      "Content-Type": "application/json",
+      "Referer": "https://kjapi.com"
+    },
+    "rate_limit": {
+      "requests_per_minute": 30,
+      "burst_limit": 5,
+      "delay_seconds": 1.5
+    }
+  },
+  "recommendation": {
+    "source_file": "./data/recommendations.txt",
+    "encoding": "utf-8",
+    "max_records": 5,
+    "history_filename": "comparison_history.jsonl"
+  },
+  "data": {
+    "storage_path": "./data",
+    "history_path": "./data/history",
+    "results_path": "./data/results",
+    "backup_path": "./data/backup",
+    "cache_enabled": true,
+    "cache_size": "100MB",
+    "auto_cleanup": true,
+    "retention_days": 30
+  },
+  "logging": {
+    "level": "INFO",
+    "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    "file": "./logs/app.log",
+    "max_size": "10MB",
+    "backup_count": 5,
+    "console_output": true,
+    "modules": {
+      "automator": "DEBUG",
+      "data": "INFO",
+      "api": "INFO",
+      "utils": "WARNING"
+    }
+  },
+  "loop": {
+    "enabled": true,
+    "interval": 300,
+    "max_iterations": 0,
+    "auto_restart": true,
+    "pause_on_error": true,
+    "error_threshold": 3,
+    "status_check_interval": 10
+  },
+  "performance": {
+    "max_memory_usage": "512MB",
+    "cpu_threshold": 80,
+    "monitoring_enabled": true,
+    "cleanup_interval": 3600,
+    "optimization_level": "balanced"
+  },
+  "security": {
+    "encrypt_sensitive_data": true,
+    "mask_logs": true,
+    "api_key_rotation": false,
+    "access_control": false
+  },
+  "notification": {
+    "enabled": false,
+    "email": {
+      "smtp_server": "",
+      "smtp_port": 587,
+      "username": "",
+      "password": "",
+      "recipients": []
+    },
+    "webhook": {
+      "url": "",
+      "enabled": false
+    }
+  }
+}
