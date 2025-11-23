@@ -26,6 +26,7 @@ class SearchExecutor:
         """
         self._window_manager = window_manager
         self._config = search_config or {}
+        self._ocr_region_config: Dict[str, int] = self._config.get("ocr_stats_region", {})
         self.logger = logging.getLogger(self.__class__.__name__)
 
     def execute_search(self) -> None:
@@ -220,67 +221,73 @@ class SearchExecutor:
             AutomationException: 超时时抛出
         """
         timeout = int(self._config.get("search_timeout", 300))
+        # 宽限时间：如果始终检测不到“停止”按钮激活，则在该时间后假定搜索已完成
+        grace_seconds = 15
         self.logger.info("等待搜索完成（超时: %d秒）...", timeout)
-        
-        start_time = time.time()
-        
-        while time.time() - start_time < timeout:
-            # 检查是否有"停止"按钮（搜索中）或结果表格已显示
-            if self._is_search_completed():
-                self.logger.info("搜索已完成")
-                return
-            
-            time.sleep(1)
-        
-        raise AutomationException(f"搜索在 {timeout} 秒内未完成")
 
-    def _is_search_completed(self) -> bool:
-        """检查搜索是否已完成。
+        start_time = time.time()
+        check_count = 0
+        search_started = False  # 标记是否曾检测到搜索进行中
+
+        while time.time() - start_time < timeout:
+            check_count += 1
+            elapsed = time.time() - start_time
+
+            # 检查搜索状态
+            is_searching = self._is_searching()
+
+            if is_searching:
+                if not search_started:
+                    self.logger.debug("检测到搜索开始（停止按钮已激活）")
+                search_started = True
+                if check_count % 5 == 0:
+                    self.logger.info("搜索进行中... 已等待 %d 秒", int(elapsed))
+            else:
+                if search_started:
+                    # 搜索曾经开始，现在检测为未搜索，说明已完成
+                    self.logger.info("✓ 搜索已完成（耗时 %d 秒）", int(elapsed))
+                    time.sleep(0.5)  # 额外等待0.5秒确保UI更新完成
+                    return
+
+                # 从未检测到搜索开始，可能是停止按钮无法识别
+                if elapsed >= grace_seconds:
+                    self.logger.warning(
+                        "在 %d 秒内未检测到‘停止’按钮激活，可能无法判断搜索状态，"
+                        "假定搜索已完成，继续后续步骤。",
+                        int(elapsed),
+                    )
+                    time.sleep(0.5)
+                    return
+
+            time.sleep(1)
+
+        raise AutomationException(f"搜索在 {timeout} 秒内未完成")
+    
+    def _is_searching(self) -> bool:
+        """检查搜索是否正在进行。
         
         Returns:
-            True 表示已完成，False 表示仍在进行
+            True 表示正在搜索，False 表示未在搜索
         """
         main_window = self._window_manager.main_window
         if not main_window:
             return False
         
         try:
-            # 方法1：检查是否有数据行（表格中有内容）
-            tables = main_window.descendants(control_type="DataGrid")
-            if tables:
-                # 检查表格是否有数据项
-                table = tables[0]
-                items = table.descendants(control_type="DataItem")
-                if len(items) > 0:
-                    return True
-            
-            # 方法2：检查"停止"按钮是否已消失或变为不可用
+            # 检查"停止"按钮是否活跃
             buttons = main_window.descendants(control_type="Button")
-            stop_button_active = False
             for button in buttons:
                 try:
                     button_text = button.window_text()
                     if "停止" in button_text or "Stop" in button_text:
                         if button.is_enabled():
-                            stop_button_active = True
-                            break
+                            return True
                 except Exception:  # pylint: disable=broad-except
                     continue
             
-            # 如果停止按钮不活跃，说明搜索可能已完成
-            if not stop_button_active:
-                # 再次确认是否有结果
-                time.sleep(1)
-                tables = main_window.descendants(control_type="DataGrid")
-                if tables:
-                    items = tables[0].descendants(control_type="DataItem")
-                    if len(items) > 0:
-                        return True
-            
+            return False
         except Exception:  # pylint: disable=broad-except
-            pass
-        
-        return False
+            return False
 
     def _extract_statistics_area(self, max_count: int) -> List[int]:
         """提取右侧"推荐号统计"区域的TOP号码。
@@ -399,71 +406,169 @@ class SearchExecutor:
             [(号码, 次数), ...] 列表
         """
         try:
-            # 尝试导入easyocr
             try:
                 import easyocr
             except ImportError:
                 self.logger.warning("easyocr未安装，跳过OCR识别。安装: pip install easyocr")
                 return []
-            
+
             main_window = self._window_manager.main_window
             if not main_window:
                 return []
-            
-            # 获取窗口位置
+
             rect = main_window.rectangle()
-            
-            # 右侧统计区域（根据截图估算，相对窗口位置）
-            # 统计区域大约在窗口右侧，X偏移约845，Y偏移约50
-            stats_region = (
-                rect.left + 845,  # X起始（推荐号统计框左边）
-                rect.top + 50,    # Y起始
-                125,              # 宽度
-                400               # 高度
-            )
-            
-            self.logger.info("OCR识别区域: (%d, %d, %d, %d)", *stats_region)
-            
-            # 截取区域并保存为临时图片
-            screenshot = pyautogui.screenshot(region=stats_region)
-            
-            # 转为numpy数组供easyocr使用
+            window_region = (rect.left, rect.top, rect.width(), rect.height())
+            full_screenshot = pyautogui.screenshot(region=window_region)
+
+            # 校验窗口截图尺寸，避免误连到错误窗口（如计划接口小窗）
+            try:
+                min_width = int(self._ocr_region_config.get("min_window_width", 800))
+            except Exception:
+                min_width = 800
+            try:
+                min_height = int(self._ocr_region_config.get("min_window_height", 600))
+            except Exception:
+                min_height = 600
+
+            if full_screenshot.width < min_width or full_screenshot.height < min_height:
+                self.logger.warning(
+                    "检测到窗口截图尺寸异常 (width=%d, height=%d)，尝试重新连接主窗口后重试OCR...",
+                    full_screenshot.width,
+                    full_screenshot.height,
+                )
+                try:
+                    # 重新绑定主窗口，纠正句柄
+                    self._window_manager.connect_to_window(timeout=5)
+                    main_window = self._window_manager.main_window
+                    if main_window:
+                        rect = main_window.rectangle()
+                        window_region = (rect.left, rect.top, rect.width(), rect.height())
+                        full_screenshot = pyautogui.screenshot(region=window_region)
+                        self.logger.info(
+                            "重连后全窗口截图尺寸: %dx%d",
+                            full_screenshot.width,
+                            full_screenshot.height,
+                        )
+                except Exception as exc:  # pylint: disable=broad-except
+                    self.logger.warning("重新连接主窗口失败: %s", exc)
+
+                # 若重连后尺寸仍异常，则放弃本次 OCR，回退到其它提取方式
+                if full_screenshot.width < min_width or full_screenshot.height < min_height:
+                    self.logger.warning(
+                        "重连后窗口尺寸仍异常 (width=%d, height=%d)，放弃本次推荐区OCR，回退到表格统计/提取。",
+                        full_screenshot.width,
+                        full_screenshot.height,
+                    )
+                    return []
+
             import numpy as np
-            img_array = np.array(screenshot)
-            
-            # 初始化OCR（首次会下载模型）
+
             self.logger.info("初始化OCR引擎...")
-            reader = easyocr.Reader(['en'], gpu=False)  # 只识别英文数字
-            
-            # OCR识别
-            self.logger.info("执行OCR识别...")
-            results = reader.readtext(img_array)
-            
-            # 解析结果
-            number_stats = []
+            reader = easyocr.Reader(['ch_sim', 'en'], gpu=False)
+
+            # 保存全窗口调试截图
+            import os
+            os.makedirs("logs", exist_ok=True)
+            full_window_path = os.path.join("logs", "full_window_capture.png")
+            full_screenshot.save(full_window_path)
+            self.logger.info("已保存全窗口截图: %s (尺寸: %dx%d)", full_window_path, full_screenshot.width, full_screenshot.height)
+
+            anchor_region = self._locate_anchor_region(reader, np.array(full_screenshot), rect)
+            if anchor_region:
+                self.logger.info("✓ 通过锚点自适应定位OCR区域: %s", anchor_region)
+                target_region = anchor_region
+            else:
+                self.logger.warning("⚠ 未找到推荐号锚点，使用固定偏移量（窗口位置/分辨率改变后可能失效）")
+                target_region = self._compute_ocr_region(rect)
+                self.logger.info("回退使用配置区域: %s", target_region)
+
+            cropped_image = self._crop_region_from_window(full_screenshot, target_region, rect)
+            if not cropped_image:
+                self.logger.warning("无法裁剪OCR区域，放弃本次识别")
+                return []
+
+            # 保存裁剪后的调试截图
+            debug_path = os.path.join("logs", "recommendation_ocr_capture.png")
+            cropped_image.save(debug_path)
+            self.logger.info("已保存推荐号OCR裁剪截图: %s (尺寸: %dx%d)", debug_path, cropped_image.width, cropped_image.height)
+
+            # 图像预处理：灰度 + 放大，提高数字识别率
+            preprocessed = cropped_image.convert("L")
+            scale_factor = 2
+            try:
+                cfg_scale = int(self._ocr_region_config.get("scale_factor", 0))
+                if cfg_scale >= 2:
+                    scale_factor = cfg_scale
+            except Exception:
+                scale_factor = 2
+            if scale_factor > 1:
+                new_size = (cropped_image.width * scale_factor, cropped_image.height * scale_factor)
+                preprocessed = preprocessed.resize(new_size)
+            self.logger.debug("推荐区OCR预处理后图像尺寸: %dx%d", preprocessed.width, preprocessed.height)
+
+            # 使用 Tesseract 对预处理后的整块区域做行级 OCR
+            try:
+                import pytesseract
+            except ImportError:
+                self.logger.warning(
+                    "pytesseract 未安装，无法使用 Tesseract 识别推荐区，请先安装: pip install pytesseract 并安装 tesseract 引擎"
+                )
+                return []
+
+            # 配置 Tesseract 可执行文件路径
+            tesseract_cmd = self._config.get("tesseract_cmd")
+            if tesseract_cmd:
+                import os as _os_check
+                if _os_check.path.exists(tesseract_cmd):
+                    pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
+                    self.logger.info("使用配置的 Tesseract 路径: %s", tesseract_cmd)
+                else:
+                    self.logger.warning("配置的 Tesseract 路径不存在: %s，请检查文件是否存在", tesseract_cmd)
+            else:
+                self.logger.info("未配置 tesseract_cmd，尝试使用系统 PATH 中的 tesseract")
+
+            custom_config = "--psm 6 -c tessedit_char_whitelist=0123456789:"
+            self.logger.info("使用 Tesseract 识别推荐区统计... (psm=6, whitelist=0123456789:)")
+            raw_text = pytesseract.image_to_string(preprocessed, config=custom_config)
+            if not raw_text:
+                self.logger.warning("Tesseract 未识别到任何文本")
+                return []
+
+            lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
+            for idx, line in enumerate(lines, 1):
+                self.logger.info("  [TESS 行 %d] '%s'", idx, line)
+
+            # 解析结果：从每一行提取“号码: 次数”
+            stats_map: Dict[int, int] = {}
             pattern = r'^(\d)\s*[:：]\s*(\d{1,3})$'
-            
-            for (bbox, text, prob) in results:
-                text = text.strip()
-                self.logger.debug("OCR检测到: '%s' (置信度: %.2f)", text, prob)
-                
-                # 容错处理：字母O替换为数字0（OCR常见误识别）
-                text = text.replace('O', '0').replace('o', '0')
-                
-                # 匹配 "数字: 数字" 格式
+
+            for line in lines:
+                text = line.replace('O', '0').replace('o', '0').replace('：', ':')
+                if not text:
+                    continue
+
+                parsed: Optional[Tuple[int, int]] = None
                 match = re.match(pattern, text)
                 if match:
-                    try:
-                        number = int(match.group(1))
-                        count = int(match.group(2))
-                        
-                        if 0 <= number <= 9 and 1 <= count <= 200:
-                            number_stats.append((number, count))
-                            self.logger.debug("✓ OCR提取: %d: %d", number, count)
-                    except Exception:
-                        continue
-            
+                    parsed = (int(match.group(1)), int(match.group(2)))
+                else:
+                    parsed = self._parse_ocr_stat_text(text)
+
+                if not parsed:
+                    self.logger.debug("跳过无法解析的文本行: '%s'", text)
+                    continue
+                number, count = parsed
+                if not (0 <= number <= 9 and 1 <= count <= 200):
+                    self.logger.debug("跳过范围外数据: 号码=%d, 次数=%d", number, count)
+                    continue
+                previous = stats_map.get(number)
+                if previous is None or count > previous:
+                    stats_map[number] = count
+                    self.logger.info("  ✓ 解析成功: %d: %d", number, count)
+
+            number_stats = [(num, cnt) for num, cnt in stats_map.items()]
             if number_stats:
+                number_stats.sort(key=lambda x: (-x[1], x[0]))
                 self.logger.info("✓ OCR成功识别 %d 条统计数据", len(number_stats))
             else:
                 self.logger.warning("OCR未识别到有效数据")
@@ -475,6 +580,140 @@ class SearchExecutor:
             import traceback
             self.logger.debug(traceback.format_exc())
             return []
+
+    def _compute_ocr_region(self, rect) -> Tuple[int, int, int, int]:
+        """根据配置或默认偏移返回 OCR 识别区域。"""
+
+        offset_x = int(self._ocr_region_config.get("offset_x", 845))
+        offset_y = int(self._ocr_region_config.get("offset_y", 50))
+        width = int(self._ocr_region_config.get("width", 140))
+        height = int(self._ocr_region_config.get("height", 420))
+        inner_offset_x = int(self._ocr_region_config.get("inner_offset_x", 0))
+
+        left = rect.left + offset_x + inner_offset_x
+        # 向右偏移后适当收窄宽度，避免越界
+        if inner_offset_x > 0 and width > inner_offset_x + 10:
+            width = width - inner_offset_x
+        return (left, rect.top + offset_y, width, height)
+
+    def _locate_anchor_region(self, reader, full_image_array, rect) -> Optional[Tuple[int, int, int, int]]:
+        """在全窗口截图中寻找“推荐号”锚点，返回其下方区域。"""
+
+        try:
+            results = reader.readtext(full_image_array)
+            self.logger.debug("全窗口OCR识别到 %d 个文本区域", len(results))
+            # 输出前若干个识别结果，便于调试
+            for bbox, text, prob in results[:20]:
+                self.logger.debug("  OCR: '%s' (prob=%.2f, bbox=%s)", text.strip(), prob, bbox)
+        except Exception as exc:  # pylint: disable=broad-except
+            self.logger.warning("锚点识别失败: %s", exc)
+            return None
+
+        # 增强锚点关键字匹配（支持多种变体和模糊匹配）
+        anchor_keywords = [
+            "推荐号",
+            "荐号",
+            "推荐号统计",
+            "荐号统计",
+            "号码统计",
+            "推荐",
+            "统计",
+            "tuijian",
+            "recommend",
+        ]
+
+        for bbox, text, prob in results:
+            normalized = text.strip().replace(" ", "")  # 移除空格
+            if not normalized:
+                continue
+
+            # 检查是否包含任一关键字
+            found_keyword = None
+            for keyword in anchor_keywords:
+                if keyword in normalized:
+                    found_keyword = keyword
+                    break
+
+            if not found_keyword:
+                continue
+
+            self.logger.debug("匹配到锚点关键字 '%s' in '%s'", found_keyword, text)
+            left = min(point[0] for point in bbox)
+            right = max(point[0] for point in bbox)
+            top = min(point[1] for point in bbox)
+            bottom = max(point[1] for point in bbox)
+            gap = int(self._ocr_region_config.get("anchor_gap", 10))
+            width = int(self._ocr_region_config.get("width", 140))
+            height = int(self._ocr_region_config.get("height", 420))
+            inner_offset_x = int(self._ocr_region_config.get("inner_offset_x", 0))
+
+            # 计算裁剪区域：从锚点下方开始
+            region_left = rect.left + int(left) + inner_offset_x
+            region_top = rect.top + int(bottom) + gap
+            region_left = max(region_left, rect.left)
+            # 向右偏移后，适当收窄宽度，避免越界
+            if inner_offset_x > 0 and width > inner_offset_x + 10:
+                width = width - inner_offset_x
+            region_left = min(region_left, rect.right - width)
+            region_top = min(region_top, rect.bottom - height)
+
+            self.logger.info("找到锚点'%s', 局部bbox=%s", text, bbox)
+            self.logger.info("窗口全局坐标: left=%d, top=%d, width=%d, height=%d", rect.left, rect.top, rect.width(), rect.height())
+            self.logger.info("裁剪区域配置: width=%d, height=%d, gap=%d", width, height, gap)
+            self.logger.info("推荐区全局坐标: left=%d, top=%d, width=%d, height=%d", region_left, region_top, width, height)
+            return (region_left, region_top, width, height)
+        return None
+
+    def _crop_region_from_window(self, screenshot, target_region, rect) -> Optional["Image.Image"]:
+        """从整窗截图中裁剪指定的全局区域。"""
+
+        if not target_region:
+            self.logger.warning("裁剪失败: target_region 为 None")
+            return None
+        left, top, width, height = target_region
+        if width <= 0 or height <= 0:
+            self.logger.warning("裁剪失败: 区域尺寸无效 width=%d, height=%d", width, height)
+            return None
+        
+        # 全局坐标转换为窗口局部坐标
+        local_left = left - rect.left
+        local_top = top - rect.top
+        local_right = local_left + width
+        local_bottom = local_top + height
+        
+        self.logger.debug("裁剪计算: 全局区域(%d,%d,%d,%d) -> 局部区域(%d,%d,%d,%d), 窗口尺寸(%d,%d)", 
+                         left, top, width, height, local_left, local_top, local_right, local_bottom,
+                         screenshot.width, screenshot.height)
+        
+        if local_left < 0 or local_top < 0:
+            self.logger.warning("裁剪失败: 局部坐标越界 local_left=%d, local_top=%d", local_left, local_top)
+            return None
+        if local_right > screenshot.width or local_bottom > screenshot.height:
+            self.logger.warning("裁剪失败: 局部区域超出窗口 local_right=%d > width=%d 或 local_bottom=%d > height=%d", 
+                              local_right, screenshot.width, local_bottom, screenshot.height)
+            return None
+        
+        return screenshot.crop((local_left, local_top, local_right, local_bottom))
+
+    def _parse_ocr_stat_text(self, text: str) -> Optional[Tuple[int, int]]:
+        """宽松解析 OCR 返回的文本，提取号码与出现次数。"""
+
+        cleaned = text.strip()
+        if not cleaned:
+            return None
+        digits = re.findall(r"\d+", cleaned)
+        if len(digits) < 2:
+            return None
+        number_char = digits[0][0]
+        if not number_char.isdigit():
+            return None
+        number = int(number_char)
+        count_token = digits[-1][-3:]
+        try:
+            count = int(count_token)
+        except ValueError:
+            return None
+        return number, count
 
     def _compute_statistics_from_table_counts(self) -> List[Tuple[int, int]]:
         """当UI不可读时，基于表格数据统计数字出现次数。"""

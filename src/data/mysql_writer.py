@@ -95,7 +95,7 @@ class MySQLWriter:
                 host=self._config.get("host", "localhost"),
                 port=int(self._config.get("port", 3306)),
                 user=self._config.get("user", "root"),
-                password=self._config.get("password", ""),
+                password=self._config.get("password", "560117"),
                 database=self._config.get("database", "lottery"),
                 charset=self._config.get("charset", "utf8mb4"),
                 autocommit=False,

@@ -1,3 +1,7 @@
+---
+trigger: always_on
+---
+
 # AI代理开发规则 
 
 ## 核心规则

@@ -68,7 +68,16 @@
       "formula_type": "自定义",
       "data_source": "历史数据",
       "analysis_method": "统计分析"
-    }
+    },
+    "ocr_stats_region": {
+      "width": 280,
+      "height": 550,
+      "anchor_gap": 10,
+      "offset_x": 845,
+      "offset_y": 50,
+      "inner_offset_x": 20
+    },
+    "tesseract_cmd": "D:/Tools/Tesseract/tesseract.exe"
   },
   "api": {
     "links_file": "d:/PC-Test/docs/链接.md",
@@ -100,6 +109,7 @@
     "wait_for_new_result": true,
     "poll_interval": 5,
     "max_wait_seconds": 90,
+    "force_ocr_only": true,
     "ocr": {
       "enabled": true,
       "region": [200, 120, 460, 420],
@@ -107,7 +117,16 @@
       "period_length": 12,
       "numbers_length": 5,
       "max_retries": 3,
-      "retry_interval": 2
+      "retry_interval": 2,
+      "debug_capture_path": "./logs/lottery_ocr_capture.png",
+      "window_title": "计划接口-奇趣腾讯分分彩",
+      "window_region": {
+        "offset_x": 40,
+        "offset_y": 100,
+        "width": 520,
+        "height": 260,
+        "anchor_gap": 20
+      }
     }
   },
   "mysql": {

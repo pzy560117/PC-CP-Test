@@ -30,6 +30,7 @@ class WindowManager:
         self._app: Optional[Application] = None
         self._main_window: Optional[UIAWrapper] = None
         self._window_geometry = self._parse_geometry(self._config.get("window_geometry"))
+        self._enable_highlight = bool(self._config.get("enable_highlight", False))
         self._topmost_keywords = self._parse_topmost_keywords(self._config.get("topmost_windows"))
         pyautogui.FAILSAFE = True
         pyautogui.PAUSE = 0.5
@@ -61,10 +62,28 @@ class WindowManager:
                 
                 for window in windows:
                     try:
-                        current_title = window.window_text()
+                        current_title = window.window_text() or ""
+                        if not current_title:
+                            continue
+
+                        # 避免将计划接口窗口误认为主窗口
+                        if "计划接口" in current_title:
+                            self.logger.debug("跳过计划接口相关窗口: %s", current_title)
+                            continue
+
                         self.logger.debug("检查窗口: %s", current_title)
                         
-                        # 方式1：直接匹配配置的标题
+                        # 优先：精确匹配配置标题
+                        if current_title == window_title:
+                            self._app = Application(backend="uia").connect(handle=window.handle)
+                            self._main_window = window
+                            self.logger.info("✓ 成功连接到窗口: %s", current_title)
+                            self._apply_window_geometry()
+                            self._bring_window_to_front()
+                            self._ensure_topmost_windows()
+                            return self._main_window
+
+                        # 方式1：标题中包含配置标题
                         if window_title in current_title:
                             self._app = Application(backend="uia").connect(handle=window.handle)
                             self._main_window = window
@@ -93,8 +112,13 @@ class WindowManager:
                                 self.logger.debug("找到 %d 个子控件", len(all_descendants))
                                 for child in all_descendants[:100]:  # 只检查前100个
                                     try:
-                                        child_title = child.window_text()
-                                        if child_title and "公式搜索" in child_title:
+                                        child_title = child.window_text() or ""
+                                        if not child_title:
+                                            continue
+                                        if "计划接口" in child_title:
+                                            self.logger.debug("跳过计划接口子窗口: %s", child_title)
+                                            continue
+                                        if "公式搜索" in child_title:
                                             self._app = Application(backend="uia").connect(handle=child.handle)
                                             self._main_window = child
                                             self.logger.info("✓ 成功连接到子窗口: %s", child_title)
@@ -134,6 +158,31 @@ class WindowManager:
         if width <= 0 or height <= 0:
             return None
         return (x, y, width, height)
+
+    def get_window_rect(self, title_keyword: str, timeout: int = 5):  # type: ignore[override]
+        """获取标题包含关键字的窗口矩形，返回 pywinauto Rectangle。"""
+
+        if not title_keyword:
+            return None
+
+        end_time = time.time() + timeout
+        while time.time() < end_time:
+            try:
+                windows = Desktop(backend="uia").windows()
+                for window in windows:
+                    try:
+                        current_title = window.window_text() or ""
+                        if title_keyword in current_title:
+                            self.logger.debug("get_window_rect 命中窗口: %s", current_title)
+                            return window.rectangle()
+                    except Exception:  # pylint: disable=broad-except
+                        continue
+            except Exception as exc:  # pylint: disable=broad-except
+                self.logger.debug("获取窗口矩形失败: %s", exc)
+                break
+            time.sleep(0.5)
+
+        return None
 
     def _parse_topmost_keywords(self, keywords_cfg: Optional[List[str]]) -> List[str]:
         """解析需要置顶的窗口关键字。"""
@@ -227,6 +276,59 @@ class WindowManager:
                     _set_topmost(window.handle, title)
             except Exception:  # pylint: disable=broad-except
                 continue
+
+    def ensure_window_on_top(self, timeout: int = 10) -> None:
+        """确保主窗口已连接并置顶显示。"""
+
+        if not self._main_window:
+            try:
+                self.connect_to_window(timeout=timeout)
+            except AutomationException as exc:
+                self.logger.warning("确保窗口置顶失败：%s", exc)
+                return
+
+        self._bring_window_to_front()
+
+    def ensure_window_visible_by_title(self, title_keyword: str, timeout: int = 5) -> None:
+        """根据标题关键字前置并恢复指定窗口（不修改当前主窗口）。
+
+        Args:
+            title_keyword: 窗口标题中应包含的关键字
+            timeout: 超时时间（秒）
+        """
+
+        if not title_keyword:
+            return
+
+        end_time = time.time() + timeout
+        while time.time() < end_time:
+            try:
+                windows = Desktop(backend="uia").windows()
+            except Exception as exc:  # pylint: disable=broad-except
+                self.logger.debug("枚举窗口失败: %s", exc)
+                break
+
+            for window in windows:
+                try:
+                    title = window.window_text() or ""
+                    if not title or title_keyword not in title:
+                        continue
+
+                    try:
+                        window.set_focus()
+                    except Exception as exc:  # pylint: disable=broad-except
+                        self.logger.debug("设置窗口焦点失败 (%s): %s", title, exc)
+                    try:
+                        window.restore()
+                    except Exception as exc:  # pylint: disable=broad-except
+                        self.logger.debug("恢复窗口失败 (%s): %s", title, exc)
+
+                    self.logger.info("✓ 已前置并恢复窗口: %s", title)
+                    return
+                except Exception:  # pylint: disable=broad-except
+                    continue
+
+            time.sleep(0.5)
 
     def activate_window(self) -> None:
         """激活并前置主窗口。
@@ -335,59 +437,75 @@ class WindowManager:
 
     @property
     def main_window(self) -> Optional[UIAWrapper]:
-        """获取主窗口对象。"""
+        """返回当前已连接的主窗口。"""
+
         return self._main_window
 
+    def find_child_window(self, title_keyword: str, timeout: int = 5) -> Optional[UIAWrapper]:
+        """在当前主窗口中查找包含关键字的子窗口。"""
+
+        if not self._main_window or not title_keyword:
+            return None
+
+        end_time = time.time() + timeout
+        while time.time() < end_time:
+            try:
+                descendants = self._main_window.descendants()
+                for child in descendants:
+                    try:
+                        child_title = child.window_text() or ""
+                        if title_keyword in child_title:
+                            self.logger.debug("找到子窗口: %s", child_title)
+                            return child
+                    except Exception:  # pylint: disable=broad-except
+                        continue
+            except Exception as exc:  # pylint: disable=broad-except
+                self.logger.debug("查找子窗口失败: %s", exc)
+                break
+            time.sleep(0.5)
+
+        return None
+
     def highlight_control(self, control: UIAWrapper, duration: float = 0.2) -> None:
-        """在控件周围显示红色高亮框。
-        
-        Args:
-            control: 要高亮显示的控件
-            duration: 高亮持续时间（秒）
-        """
+        """在控件周围显示红色高亮框。"""
+
+        if not self._enable_highlight:
+            return
+
         try:
-            # 获取控件的矩形区域
             rect = control.rectangle()
             left, top, right, bottom = rect.left, rect.top, rect.right, rect.bottom
-            
-            # 使用 pyautogui 在控件周围绘制红色矩形（通过移动鼠标）
-            # 注意：这是一个简化的实现，真正的高亮需要使用 GUI 框架
+
             import tkinter as tk
-            
-            # 创建一个透明窗口来显示边框
+
             highlight_window = tk.Tk()
             highlight_window.overrideredirect(True)
             highlight_window.attributes('-topmost', True)
             highlight_window.attributes('-alpha', 0.3)
-            
-            # 设置窗口位置和大小
+
             width = right - left
             height = bottom - top
             highlight_window.geometry(f"{width}x{height}+{left}+{top}")
-            
-            # 创建红色边框
+
             canvas = tk.Canvas(highlight_window, bg='red', highlightthickness=0)
             canvas.pack(fill=tk.BOTH, expand=True)
-            
-            # 绘制边框（内部透明）
+
             border_width = 3
             canvas.create_rectangle(
-                border_width, border_width,
-                width - border_width, height - border_width,
-                outline='red', width=border_width * 2, fill=''
+                border_width,
+                border_width,
+                width - border_width,
+                height - border_width,
+                outline='red',
+                width=border_width * 2,
+                fill='',
             )
-            
-            # 显示窗口
+
             highlight_window.update()
-            
-            # 等待指定时间
             time.sleep(duration)
-            
-            # 关闭窗口
             highlight_window.destroy()
-            
             self.logger.debug("已显示控件高亮提示")
-            
+
         except Exception as exc:
             self.logger.warning("显示控件高亮失败: %s", exc)
 

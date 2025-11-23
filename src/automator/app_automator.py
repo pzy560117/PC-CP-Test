@@ -44,7 +44,8 @@ class AppAutomator:
         # API 客户端
         self.lottery_client = LotteryApiClient(config_loader.get("api", {}))
         self._lottery_cfg = config_loader.get("lottery", {}) or {}
-        self.lottery_ocr = LotteryOCRReader(self._lottery_cfg)
+        self._force_lottery_ocr = bool(self._lottery_cfg.get("force_ocr_only", False))
+        self.lottery_ocr = LotteryOCRReader(self._lottery_cfg, self.window_manager)
         
         # 推荐数据管理
         self._recommendation_cfg = config_loader.get("recommendation", {}) or {}
@@ -393,12 +394,25 @@ class AppAutomator:
 
         if self.lottery_ocr and self.lottery_ocr.enabled:
             try:
+                ocr_cfg = self._lottery_cfg.get("ocr", {}) or {}
+                ocr_window_title = ocr_cfg.get("window_title", "")
+                if ocr_window_title:
+                    self.window_manager.ensure_window_visible_by_title(ocr_window_title, timeout=5)
+                else:
+                    self.window_manager.ensure_window_on_top(timeout=5)
+            except Exception as exc:  # pylint: disable=broad-except
+                self.logger.debug("确保开奖窗口置顶失败: %s", exc)
+            try:
                 ocr_result = self.lottery_ocr.capture_latest_result()
                 if ocr_result:
                     self.logger.debug("OCR 获取期号 %s", ocr_result.period)
                     return ocr_result
             except Exception as exc:  # pylint: disable=broad-except
                 self.logger.warning("OCR 获取开奖失败: %s", exc)
+
+        if self._force_lottery_ocr:
+            self.logger.warning("已启用 force_ocr_only，跳过 API 回退。")
+            return None
 
         try:
             api_result = self.lottery_client.fetch_latest_result()
@@ -420,6 +434,10 @@ class AppAutomator:
             self.mysql_writer.write_comparisons(lottery_result, comparisons)
         except Exception as exc:  # pylint: disable=broad-except
             self.logger.warning("写入 MySQL 失败: %s", exc)
+        try:
+            self.supabase_writer.write_comparison_results(lottery_result, comparisons)
+        except Exception as exc:  # pylint: disable=broad-except
+            self.logger.warning("写入 Supabase 对比结果失败: %s", exc)
 
     def write_recommendations_to_cloud(self, period: str, recommendations: List[List[int]]) -> None:
         """将推荐号推送到 Supabase。"""
