@@ -3,13 +3,15 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import pyautogui
 from PIL import Image, ImageDraw
 from pywinauto import Application, Desktop
 from pywinauto.controls.uiawrapper import UIAWrapper
 from pywinauto.findwindows import ElementNotFoundError
+import win32con
+import win32gui
 
 from src.exception.custom_exceptions import AutomationException
 
@@ -27,6 +29,8 @@ class WindowManager:
         self.logger = logging.getLogger(self.__class__.__name__)
         self._app: Optional[Application] = None
         self._main_window: Optional[UIAWrapper] = None
+        self._window_geometry = self._parse_geometry(self._config.get("window_geometry"))
+        self._topmost_keywords = self._parse_topmost_keywords(self._config.get("topmost_windows"))
         pyautogui.FAILSAFE = True
         pyautogui.PAUSE = 0.5
 
@@ -65,6 +69,9 @@ class WindowManager:
                             self._app = Application(backend="uia").connect(handle=window.handle)
                             self._main_window = window
                             self.logger.info("✓ 成功连接到窗口: %s", current_title)
+                            self._apply_window_geometry()
+                            self._bring_window_to_front()
+                            self._ensure_topmost_windows()
                             return self._main_window
                         
                         # 方式2：匹配"公式搜索"关键词（子窗口）
@@ -72,6 +79,9 @@ class WindowManager:
                             self._app = Application(backend="uia").connect(handle=window.handle)
                             self._main_window = window
                             self.logger.info("✓ 成功连接到窗口: %s （匹配：公式搜索）", current_title)
+                            self._apply_window_geometry()
+                            self._bring_window_to_front()
+                            self._ensure_topmost_windows()
                             return self._main_window
                         
                         # 方式3：检查子窗口（特别是"奇趣腾讯分分彩"的子窗口）
@@ -88,6 +98,9 @@ class WindowManager:
                                             self._app = Application(backend="uia").connect(handle=child.handle)
                                             self._main_window = child
                                             self.logger.info("✓ 成功连接到子窗口: %s", child_title)
+                                            self._apply_window_geometry()
+                                            self._bring_window_to_front()
+                                            self._ensure_topmost_windows()
                                             return self._main_window
                                     except Exception:
                                         continue
@@ -104,6 +117,116 @@ class WindowManager:
             time.sleep(1)
         
         raise AutomationException(f"在 {timeout} 秒内未找到窗口: {window_title}")
+
+    def _parse_geometry(self, geometry_cfg: Optional[Dict[str, Any]]) -> Optional[Tuple[int, int, int, int]]:
+        """解析窗口位置配置。"""
+
+        if not geometry_cfg:
+            return None
+        try:
+            x = int(geometry_cfg.get("x", 0))
+            y = int(geometry_cfg.get("y", 0))
+            width = int(geometry_cfg.get("width", 0))
+            height = int(geometry_cfg.get("height", 0))
+        except (TypeError, ValueError):
+            self.logger.warning("window_geometry 配置无效: %s", geometry_cfg)
+            return None
+        if width <= 0 or height <= 0:
+            return None
+        return (x, y, width, height)
+
+    def _parse_topmost_keywords(self, keywords_cfg: Optional[List[str]]) -> List[str]:
+        """解析需要置顶的窗口关键字。"""
+
+        if not keywords_cfg:
+            return []
+        keywords: List[str] = []
+        for item in keywords_cfg:
+            if not isinstance(item, str):
+                continue
+            keyword = item.strip()
+            if keyword:
+                keywords.append(keyword)
+        return keywords
+
+    def _apply_window_geometry(self) -> None:
+        """根据配置设置窗口位置和大小。"""
+
+        if not self._main_window or not self._window_geometry:
+            return
+        x, y, width, height = self._window_geometry
+        try:
+            self._main_window.move_window(x, y, width, height, repaint=True)
+            self.logger.info(
+                "窗口已调整到位置(%s,%s) 尺寸(%sx%s)",
+                x,
+                y,
+                width,
+                height,
+            )
+        except Exception as exc:  # pylint: disable=broad-except
+            self.logger.warning("调整窗口位置失败: %s", exc)
+
+    def _bring_window_to_front(self) -> None:
+        """尝试前置窗口并确保可见。"""
+
+        if not self._main_window:
+            return
+        try:
+            self._main_window.set_focus()
+        except Exception as exc:  # pylint: disable=broad-except
+            self.logger.debug("设置窗口焦点失败: %s", exc)
+        try:
+            self._main_window.restore()
+        except Exception as exc:  # pylint: disable=broad-except
+            self.logger.debug("恢复窗口失败: %s", exc)
+        self._ensure_topmost_windows()
+
+    def _ensure_topmost_windows(self) -> None:
+        """根据配置将相关窗口置顶展示。"""
+
+        if not self._main_window and not self._topmost_keywords:
+            return
+
+        def _set_topmost(handle: Optional[int], title: str) -> None:
+            if not handle:
+                return
+            try:
+                win32gui.SetWindowPos(
+                    handle,
+                    win32con.HWND_TOPMOST,
+                    0,
+                    0,
+                    0,
+                    0,
+                    win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_SHOWWINDOW,
+                )
+                self.logger.debug("窗口已置顶: %s", title)
+            except Exception as exc:  # pylint: disable=broad-except
+                self.logger.debug("设置窗口置顶失败 (%s): %s", title, exc)
+
+        # 先处理主窗口
+        if self._main_window:
+            _set_topmost(self._main_window.handle, self._main_window.window_text())
+
+        if not self._topmost_keywords:
+            return
+
+        try:
+            windows = Desktop(backend="uia").windows()
+        except Exception as exc:  # pylint: disable=broad-except
+            self.logger.debug("枚举窗口失败: %s", exc)
+            return
+
+        for window in windows:
+            try:
+                title = window.window_text() or ""
+                if not title:
+                    continue
+                if any(keyword in title for keyword in self._topmost_keywords):
+                    _set_topmost(window.handle, title)
+            except Exception:  # pylint: disable=broad-except
+                continue
 
     def activate_window(self) -> None:
         """激活并前置主窗口。

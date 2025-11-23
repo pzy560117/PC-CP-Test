@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Sequence
+from typing import List, Optional, Sequence
 
 from src.data.models import ComparisonResult, LotteryResult
 from src.exception.custom_exceptions import DataProcessException
@@ -51,6 +51,7 @@ class ComparisonRecorder:
         self.result_dir.mkdir(parents=True, exist_ok=True)
         self.history_file = self.result_dir / history_filename
         self.snapshot_file = self.result_dir / "latest_comparison.json"
+        self._last_period = self._load_last_period()
 
     def append_batch(self, lottery_result: LotteryResult, comparisons: Sequence[ComparisonResult]) -> None:
         """写入一次开奖期号的全部对比数据。"""
@@ -62,6 +63,24 @@ class ComparisonRecorder:
         with self.history_file.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
         self.snapshot_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        self._last_period = lottery_result.period
+
+    def get_last_period(self) -> Optional[str]:
+        """返回最近一次记录的开奖期号。"""
+
+        return self._last_period
+
+    def _load_last_period(self) -> Optional[str]:
+        """尝试从快照文件读取最后记录的期号。"""
+
+        if not self.snapshot_file.exists():
+            return None
+        try:
+            payload = json.loads(self.snapshot_file.read_text(encoding="utf-8"))
+            period = payload.get("period")
+            return str(period) if period is not None else None
+        except (json.JSONDecodeError, OSError):
+            return None
 
     @staticmethod
     def _build_payload(lottery_result: LotteryResult, comparisons: Sequence[ComparisonResult]) -> dict:

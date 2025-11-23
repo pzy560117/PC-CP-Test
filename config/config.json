@@ -34,6 +34,18 @@
     "skip_app_launch": true,
     "skip_navigation": true,
     "skip_parameter_config": true,
+    "window_geometry": {
+      "x": 100,
+      "y": 60,
+      "width": 1280,
+      "height": 780
+    },
+    "topmost_windows": [
+      "奇趣腾讯分分彩",
+      "公式搜索",
+      "计算详细",
+      "推荐结果"
+    ],
     "elements": {
       "lottery_tab": "时时彩",
       "search_tab": "公式搜索",
@@ -84,6 +96,37 @@
     "max_records": 5,
     "history_filename": "comparison_history.jsonl"
   },
+  "lottery": {
+    "wait_for_new_result": true,
+    "poll_interval": 5,
+    "max_wait_seconds": 90,
+    "ocr": {
+      "enabled": true,
+      "region": [200, 120, 460, 420],
+      "languages": ["ch_sim", "en"],
+      "period_length": 12,
+      "numbers_length": 5,
+      "max_retries": 3,
+      "retry_interval": 2
+    }
+  },
+  "mysql": {
+    "enabled": true,
+    "host": "127.0.0.1",
+    "port": 3306,
+    "user": "root",
+    "password": "560117",
+    "database": "lottery",
+    "table": "comparison_results",
+    "charset": "utf8mb4"
+  },
+  "supabase": {
+    "enabled": true,
+    "rest_url": "https://uspeqkgnmkwmqnctytxu.supabase.co/rest/v1",
+    "api_key": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVzcGVxa2dubWt3bXFuY3R5dHh1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM4NTExNzAsImV4cCI6MjA3OTQyNzE3MH0.yFu4dghvEP_jRpiL7JisO5vDaqXMkSuTnRw8oeBrZ4s",
+    "table": "recommendations",
+    "timeout": 10
+  },
   "data": {
     "storage_path": "./data",
     "history_path": "./data/history",
@@ -110,7 +153,7 @@
   },
   "loop": {
     "enabled": true,
-    "interval": 300,
+    "interval": 1,
     "max_iterations": 0,
     "auto_restart": true,
     "pause_on_error": true,

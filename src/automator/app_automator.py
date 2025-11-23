@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
+import time
+from typing import Callable, List, Optional, Tuple
 
 from src.api.data_api import LotteryApiClient
 from src.automator.app_launcher import AppLauncher
 from src.automator.navigator import Navigator
+from src.automator.lottery_reader import LotteryOCRReader
 from src.automator.search_configurator import SearchConfigurator
 from src.automator.search_executor import SearchExecutor
 from src.automator.window_manager import WindowManager
@@ -14,6 +16,8 @@ from src.config.config_loader import ConfigLoader
 from src.data.models import ComparisonResult, LotteryResult, SearchParameters
 from src.data.processor import RecommendationProcessor
 from src.data.result_storage import ComparisonRecorder, RecommendationRepository
+from src.data.mysql_writer import MySQLWriter
+from src.data.supabase_writer import SupabaseWriter
 from src.exception.custom_exceptions import AutomationException, DataProcessException
 
 
@@ -39,6 +43,8 @@ class AppAutomator:
         
         # API 客户端
         self.lottery_client = LotteryApiClient(config_loader.get("api", {}))
+        self._lottery_cfg = config_loader.get("lottery", {}) or {}
+        self.lottery_ocr = LotteryOCRReader(self._lottery_cfg)
         
         # 推荐数据管理
         self._recommendation_cfg = config_loader.get("recommendation", {}) or {}
@@ -49,15 +55,26 @@ class AppAutomator:
         results_dir = config_loader.get("data.results_path", "./data/results")
         history_file = self._recommendation_cfg.get("history_filename", "comparison_history.jsonl")
         self.comparison_recorder = ComparisonRecorder(results_dir, history_file)
+
+        # MySQL 持久化
+        self.mysql_writer = MySQLWriter(config_loader.get("mysql", {}))
+        # Supabase 云端写入
+        self.supabase_writer = SupabaseWriter(config_loader.get("supabase", {}))
         
         self._running = False
 
-    def start(self, dry_run: bool = True, use_desktop_automation: bool = True) -> None:
+    def start(
+        self,
+        dry_run: bool = True,
+        use_desktop_automation: bool = True,
+        compare_mode: str = "full",
+    ) -> Optional[List[List[int]]]:
         """执行一次流程校验，必要时启动目标应用。
         
         Args:
             dry_run: 是否为干跑模式
             use_desktop_automation: 是否使用桌面自动化（True=从桌面应用搜索，False=从文件读取推荐）
+            compare_mode: full=搜索并立即对比；collect=仅搜索并返回推荐结果
         """
         if self._running:
             self.logger.info("自动化流程已在运行状态，无需重复启动。")
@@ -83,7 +100,7 @@ class AppAutomator:
                 
                 if use_desktop_automation:
                     # 桌面自动化流程
-                    self._execute_desktop_automation_pipeline()
+                    return self._execute_desktop_automation_pipeline(compare_mode=compare_mode)
                 else:
                     # 从文件读取推荐流程
                     self._execute_recommendation_pipeline()
@@ -93,7 +110,8 @@ class AppAutomator:
                     self.logger.info("将使用桌面自动化模式")
                 else:
                     self._execute_recommendation_pipeline()
-                    
+                return None
+
         except AutomationException:
             self._running = False
             raise
@@ -110,6 +128,7 @@ class AppAutomator:
         self.logger.info("即将停止自动化流程。")
         self.app_launcher.terminate()
         self._running = False
+        self.mysql_writer.close()
 
     def _log_configuration_snapshot(self) -> None:
         """输出关键配置快照，便于排障与稽核。"""
@@ -124,7 +143,7 @@ class AppAutomator:
         )
         self.logger.info("最大结果条数：%s", params.max_results)
 
-    def _execute_desktop_automation_pipeline(self) -> None:
+    def _execute_desktop_automation_pipeline(self, compare_mode: str = "full") -> Optional[List[List[int]]]:
         """执行桌面自动化流程：（可选连接窗口和导航）->执行搜索->提取结果->对比分析。"""
         try:
             # 读取配置
@@ -189,16 +208,23 @@ class AppAutomator:
             
             self.logger.info("成功提取 %d 条推荐号码", len(recommended_sets))
             
+            if compare_mode == "collect":
+                self.logger.info("✅ 已获取 %d 条推荐号码，等待下一期开奖后再对比。", len(recommended_sets))
+                return recommended_sets
+
             # 7. 获取开奖数据并对比（可选）
             self.logger.info("步骤7: 获取开奖数据并对比...")
             try:
-                lottery_result = self.lottery_client.fetch_latest_result()
+                lottery_result = self._fetch_latest_lottery_result()
+                if not lottery_result:
+                    self.logger.warning("⚠️ 未获取到新的开奖数据，本轮跳过对比和记录。")
+                    return None
                 comparisons = self._build_comparisons(recommended_sets, lottery_result)
                 
                 # 8. 记录结果
                 self.logger.info("步骤8: 记录对比结果...")
                 self._log_comparison_details(lottery_result, comparisons)
-                self.comparison_recorder.append_batch(lottery_result, comparisons)
+                self._persist_comparison_results(lottery_result, comparisons)
             except Exception as e:
                 self.logger.warning("⚠️ 获取开奖数据失败: %s", e)
                 self.logger.info("已提取推荐号码，跳过对比环节")
@@ -207,7 +233,8 @@ class AppAutomator:
                     self.logger.info("推荐 #%d: %s", idx, nums)
             
             self.logger.info("✅ 桌面自动化流程执行完成")
-            
+            return None
+
         except Exception as exc:
             raise AutomationException("桌面自动化流程执行失败") from exc
 
@@ -274,6 +301,140 @@ class AppAutomator:
                 item.hits or "-",
             )
         self.logger.info("本期共 %s 条推荐，命中 %s 条。", len(comparisons), hit_count)
+
+    def compare_recommendations_with_lottery(
+        self,
+        recommendations: List[List[int]],
+        reference_period: Optional[str],
+        stop_checker: Optional[Callable[[], bool]] = None,
+    ) -> Optional[Tuple[LotteryResult, List[ComparisonResult]]]:
+        """等待新开奖并将推荐与开奖号码进行对比。"""
+
+        lottery_result = self._fetch_latest_lottery_result(
+            reference_period=reference_period,
+            wait_for_new=True,
+            stop_checker=stop_checker,
+        )
+        if not lottery_result:
+            return None
+
+        comparisons = self._build_comparisons(recommendations, lottery_result)
+        self.logger.info("步骤8: 记录对比结果...")
+        self._log_comparison_details(lottery_result, comparisons)
+        self._persist_comparison_results(lottery_result, comparisons)
+        self.logger.info("✅ 推荐与期号 %s 对比完成", lottery_result.period)
+        return lottery_result, comparisons
+
+    def wait_for_new_lottery(
+        self,
+        reference_period: Optional[str],
+        stop_checker: Optional[Callable[[], bool]] = None,
+    ) -> Optional[LotteryResult]:
+        """等待指定期号之后的新开奖结果。"""
+
+        return self._fetch_latest_lottery_result(
+            reference_period=reference_period,
+            wait_for_new=True,
+            stop_checker=stop_checker,
+        )
+
+    def _fetch_latest_lottery_result(
+        self,
+        reference_period: Optional[str] = None,
+        wait_for_new: bool = False,
+        stop_checker: Optional[Callable[[], bool]] = None,
+    ) -> Optional[LotteryResult]:
+        """获取（或等待）最新开奖数据。"""
+
+        wait_for_new_result = wait_for_new or bool(self._lottery_cfg.get("wait_for_new_result", True))
+        poll_interval = max(1, int(self._lottery_cfg.get("poll_interval", 5)))
+        max_wait_seconds = max(0, int(self._lottery_cfg.get("max_wait_seconds", 60)))
+        target_period = reference_period or (self.comparison_recorder.get_last_period() if wait_for_new_result else None)
+
+        start_time = time.time()
+        attempt = 0
+
+        while True:
+            if stop_checker and stop_checker():
+                self.logger.info("检测到停止请求，中止开奖监控。")
+                return None
+
+            attempt += 1
+            lottery_result = self._pull_latest_lottery_result()
+            if not lottery_result:
+                self.logger.warning("未获取到开奖数据，等待 %s 秒后重试...", poll_interval)
+                time.sleep(poll_interval)
+                continue
+            if not wait_for_new_result or not target_period:
+                return lottery_result
+            if lottery_result.period != target_period:
+                if attempt > 1:
+                    self.logger.info("🎯 检测到新开奖期号 %s。", lottery_result.period)
+                return lottery_result
+
+            elapsed = time.time() - start_time
+            if max_wait_seconds and elapsed >= max_wait_seconds:
+                self.logger.warning(
+                    "等待新开奖超时（已等待 %.1f 秒），当前期号仍为 %s。",
+                    elapsed,
+                    lottery_result.period,
+                )
+                return None
+
+            self.logger.info(
+                "🕒 获取到的期号 %s 与参考期相同，等待 %s 秒后重试...",
+                lottery_result.period,
+                poll_interval,
+            )
+            time.sleep(poll_interval)
+
+    def _pull_latest_lottery_result(self) -> Optional[LotteryResult]:
+        """优先使用 OCR，再回退接口获取开奖号码。"""
+
+        if self.lottery_ocr and self.lottery_ocr.enabled:
+            try:
+                ocr_result = self.lottery_ocr.capture_latest_result()
+                if ocr_result:
+                    self.logger.debug("OCR 获取期号 %s", ocr_result.period)
+                    return ocr_result
+            except Exception as exc:  # pylint: disable=broad-except
+                self.logger.warning("OCR 获取开奖失败: %s", exc)
+
+        try:
+            api_result = self.lottery_client.fetch_latest_result()
+            self.logger.debug("API 获取期号 %s", api_result.period)
+            return api_result
+        except Exception as exc:  # pylint: disable=broad-except
+            self.logger.warning("API 获取开奖失败: %s", exc)
+            return None
+
+    def _persist_comparison_results(
+        self,
+        lottery_result: LotteryResult,
+        comparisons: List[ComparisonResult],
+    ) -> None:
+        """将对比结果写入历史文件与 MySQL。"""
+
+        self.comparison_recorder.append_batch(lottery_result, comparisons)
+        try:
+            self.mysql_writer.write_comparisons(lottery_result, comparisons)
+        except Exception as exc:  # pylint: disable=broad-except
+            self.logger.warning("写入 MySQL 失败: %s", exc)
+
+    def write_recommendations_to_cloud(self, period: str, recommendations: List[List[int]]) -> None:
+        """将推荐号推送到 Supabase。"""
+
+        if not recommendations or not period:
+            return
+        try:
+            self.supabase_writer.write_recommendations(period, recommendations)
+        except Exception as exc:  # pylint: disable=broad-except
+            self.logger.warning("写入 Supabase 失败: %s", exc)
+
+    def get_last_recorded_period(self) -> Optional[str]:
+        """返回最近一次记录的开奖期号。"""
+
+        return self.comparison_recorder.get_last_period()
 
     @property
     def config_loader(self) -> ConfigLoader:
