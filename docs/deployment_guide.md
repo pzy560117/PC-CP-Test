@@ -251,7 +251,34 @@ python main.py --real-run --loop --interval 60
 
 ## 常见问题
 
-### Q1: 提示 "未找到窗口"
+### Q1: pip 命令找不到
+
+**症状**: 
+```
+pip : 无法将"pip"项识别为 cmdlet、函数、脚本文件或可运行程序的名称
+```
+
+**原因**: pip 没有添加到系统 PATH 环境变量
+
+**解决方法 1（推荐）**: 使用 Python 模块方式调用 pip
+```bash
+python -m pip install -r requirements.txt
+python -m pip install --upgrade pip
+```
+
+**解决方法 2**: 手动添加 PATH
+1. 找到 Python 安装目录（例如 `D:\python311\python311\`）
+2. 将以下两个路径添加到系统 PATH：
+   - `D:\python311\python311\`
+   - `D:\python311\python311\Scripts\`
+3. 重新打开 PowerShell
+4. 测试：`pip --version`
+
+**注意**: 如果重新安装 Python，请勾选 "Add Python to PATH" 选项
+
+---
+
+### Q2: 提示 "未找到窗口"
 
 **原因**: 应用未启动或窗口标题不匹配
 
@@ -263,7 +290,7 @@ python main.py --real-run --loop --interval 60
    python tools/inspect_window.py
    ```
 
-### Q2: OCR 识别失败
+### Q3: OCR 识别失败
 
 **原因**: Tesseract 未安装或路径配置错误
 
@@ -275,19 +302,19 @@ python main.py --real-run --loop --interval 60
    D:\Tools\Tesseract\tesseract.exe --version
    ```
 
-### Q3: 依赖安装失败
+### Q4: 依赖安装失败
 
 **原因**: 网络问题或缺少 C++ 编译环境
 
 **解决**:
 1. 使用国内镜像源:
    ```bash
-   pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+   python -m pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
    ```
 2. 安装 Microsoft Visual C++ 14.0:
    - 下载地址: https://visualstudio.microsoft.com/visual-cpp-build-tools/
 
-### Q4: 开奖 OCR 一直识别不到
+### Q5: 开奖 OCR 一直识别不到
 
 **原因**: 计划接口窗口未打开或被遮挡
 
@@ -306,7 +333,7 @@ python main.py --real-run --loop --interval 60
    }
    ```
 
-### Q5: 推荐号提取失败
+### Q6: 推荐号提取失败
 
 **原因**: 窗口尺寸或 OCR 区域配置不正确
 
