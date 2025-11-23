@@ -17,6 +17,8 @@ from src.exception.custom_exceptions import AutomationException
 class SearchExecutor:
     """负责执行搜索和提取结果。"""
 
+    _shared_stats_region: Optional[Tuple[int, int, int, int]] = None
+
     def __init__(self, window_manager: WindowManager, search_config: Dict[str, Any]) -> None:
         """初始化搜索执行器。
         
@@ -27,6 +29,8 @@ class SearchExecutor:
         self._window_manager = window_manager
         self._config = search_config or {}
         self._ocr_region_config: Dict[str, int] = self._config.get("ocr_stats_region", {})
+        self._cached_stats_region: Optional[Tuple[int, int, int, int]] = self.__class__._shared_stats_region
+        self._easyocr_reader = None
         self.logger = logging.getLogger(self.__class__.__name__)
 
     def execute_search(self) -> None:
@@ -347,7 +351,7 @@ class SearchExecutor:
             # 尝试多种控件类型
             control_types = ["Text", "ListItem", "DataItem", "Custom", "Pane"]
             stats_map: Dict[int, int] = {}
-            # 严格匹配：必须有冒号，且次数在合理范围（1-200）
+            # 严格匹配：必须有冒号，且次数在合理范围（1-2000）
             number_pattern = re.compile(r"^(\d)\s*[:：]\s*(\d{1,3})$")
             
             for ctrl_type in control_types:
@@ -377,8 +381,8 @@ class SearchExecutor:
                             number = int(match.group(1))
                             count = int(match.group(2))
                             
-                            # 验证：号码0-9，次数1-200（合理范围）
-                            if 0 <= number <= 9 and 1 <= count <= 200:
+                            # 验证：号码0-9，次数1-2000（合理范围）
+                            if 0 <= number <= 9 and 1 <= count <= 2000:
                                 previous = stats_map.get(number)
                                 if previous is None or count > previous:
                                     stats_map[number] = count
@@ -400,18 +404,12 @@ class SearchExecutor:
         return number_stats
 
     def _extract_by_ocr(self) -> List[Tuple[int, int]]:
-        """使用OCR识别右侧统计区域（使用easyocr纯Python实现）。
+        """使用OCR识别右侧统计区域（优先使用缓存区域+Tesseract，必要时回退easyocr锚点）。
         
         Returns:
             [(号码, 次数), ...] 列表
         """
         try:
-            try:
-                import easyocr
-            except ImportError:
-                self.logger.warning("easyocr未安装，跳过OCR识别。安装: pip install easyocr")
-                return []
-
             main_window = self._window_manager.main_window
             if not main_window:
                 return []
@@ -461,125 +459,257 @@ class SearchExecutor:
                     )
                     return []
 
-            import numpy as np
-
-            self.logger.info("初始化OCR引擎...")
-            reader = easyocr.Reader(['ch_sim', 'en'], gpu=False)
-
             # 保存全窗口调试截图
-            import os
-            os.makedirs("logs", exist_ok=True)
-            full_window_path = os.path.join("logs", "full_window_capture.png")
-            full_screenshot.save(full_window_path)
-            self.logger.info("已保存全窗口截图: %s (尺寸: %dx%d)", full_window_path, full_screenshot.width, full_screenshot.height)
-
-            anchor_region = self._locate_anchor_region(reader, np.array(full_screenshot), rect)
-            if anchor_region:
-                self.logger.info("✓ 通过锚点自适应定位OCR区域: %s", anchor_region)
-                target_region = anchor_region
-            else:
-                self.logger.warning("⚠ 未找到推荐号锚点，使用固定偏移量（窗口位置/分辨率改变后可能失效）")
-                target_region = self._compute_ocr_region(rect)
-                self.logger.info("回退使用配置区域: %s", target_region)
-
-            cropped_image = self._crop_region_from_window(full_screenshot, target_region, rect)
-            if not cropped_image:
-                self.logger.warning("无法裁剪OCR区域，放弃本次识别")
-                return []
-
-            # 保存裁剪后的调试截图
-            debug_path = os.path.join("logs", "recommendation_ocr_capture.png")
-            cropped_image.save(debug_path)
-            self.logger.info("已保存推荐号OCR裁剪截图: %s (尺寸: %dx%d)", debug_path, cropped_image.width, cropped_image.height)
-
-            # 图像预处理：灰度 + 放大，提高数字识别率
-            preprocessed = cropped_image.convert("L")
-            scale_factor = 2
             try:
-                cfg_scale = int(self._ocr_region_config.get("scale_factor", 0))
-                if cfg_scale >= 2:
-                    scale_factor = cfg_scale
-            except Exception:
-                scale_factor = 2
-            if scale_factor > 1:
-                new_size = (cropped_image.width * scale_factor, cropped_image.height * scale_factor)
-                preprocessed = preprocessed.resize(new_size)
-            self.logger.debug("推荐区OCR预处理后图像尺寸: %dx%d", preprocessed.width, preprocessed.height)
+                import os
+                os.makedirs("logs", exist_ok=True)
+                full_window_path = os.path.join("logs", "full_window_capture.png")
+                full_screenshot.save(full_window_path)
+                self.logger.info(
+                    "已保存全窗口截图: %s (尺寸: %dx%d)",
+                    full_window_path,
+                    full_screenshot.width,
+                    full_screenshot.height,
+                )
+            except Exception:  # pylint: disable=broad-except
+                self.logger.debug("保存全窗口截图失败", exc_info=True)
 
-            # 使用 Tesseract 对预处理后的整块区域做行级 OCR
-            try:
-                import pytesseract
-            except ImportError:
-                self.logger.warning(
-                    "pytesseract 未安装，无法使用 Tesseract 识别推荐区，请先安装: pip install pytesseract 并安装 tesseract 引擎"
+            # 先尝试使用缓存区域 + Tesseract 快速识别
+            number_stats = self._run_tesseract_on_stats_region(full_screenshot, rect)
+            if number_stats:
+                return number_stats
+
+            # 如果已有缓存区域，认为区域本身可信，直接回退到其它提取方式，避免反复触发 easyocr
+            if self._cached_stats_region:
+                self.logger.info(
+                    "推荐区 Tesseract 未解析出有效统计数据，已存在缓存区域，跳过 easyocr 锚点识别。"
                 )
                 return []
 
-            # 配置 Tesseract 可执行文件路径
-            tesseract_cmd = self._config.get("tesseract_cmd")
-            if tesseract_cmd:
-                import os as _os_check
-                if _os_check.path.exists(tesseract_cmd):
-                    pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
-                    self.logger.info("使用配置的 Tesseract 路径: %s", tesseract_cmd)
-                else:
-                    self.logger.warning("配置的 Tesseract 路径不存在: %s，请检查文件是否存在", tesseract_cmd)
-            else:
-                self.logger.info("未配置 tesseract_cmd，尝试使用系统 PATH 中的 tesseract")
+            # 仅在尚未建立缓存区域时，才使用 easyocr 做锚点识别并更新缓存
+            self.logger.info("推荐区 Tesseract 识别失败且尚无缓存区域，尝试使用 easyocr 锚点重定位区域...")
+            return self._extract_by_ocr_with_anchor(full_screenshot, rect)
 
-            custom_config = "--psm 6 -c tessedit_char_whitelist=0123456789:"
-            self.logger.info("使用 Tesseract 识别推荐区统计... (psm=6, whitelist=0123456789:)")
-            raw_text = pytesseract.image_to_string(preprocessed, config=custom_config)
-            if not raw_text:
-                self.logger.warning("Tesseract 未识别到任何文本")
-                return []
-
-            lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
-            for idx, line in enumerate(lines, 1):
-                self.logger.info("  [TESS 行 %d] '%s'", idx, line)
-
-            # 解析结果：从每一行提取“号码: 次数”
-            stats_map: Dict[int, int] = {}
-            pattern = r'^(\d)\s*[:：]\s*(\d{1,3})$'
-
-            for line in lines:
-                text = line.replace('O', '0').replace('o', '0').replace('：', ':')
-                if not text:
-                    continue
-
-                parsed: Optional[Tuple[int, int]] = None
-                match = re.match(pattern, text)
-                if match:
-                    parsed = (int(match.group(1)), int(match.group(2)))
-                else:
-                    parsed = self._parse_ocr_stat_text(text)
-
-                if not parsed:
-                    self.logger.debug("跳过无法解析的文本行: '%s'", text)
-                    continue
-                number, count = parsed
-                if not (0 <= number <= 9 and 1 <= count <= 200):
-                    self.logger.debug("跳过范围外数据: 号码=%d, 次数=%d", number, count)
-                    continue
-                previous = stats_map.get(number)
-                if previous is None or count > previous:
-                    stats_map[number] = count
-                    self.logger.info("  ✓ 解析成功: %d: %d", number, count)
-
-            number_stats = [(num, cnt) for num, cnt in stats_map.items()]
-            if number_stats:
-                number_stats.sort(key=lambda x: (-x[1], x[0]))
-                self.logger.info("✓ OCR成功识别 %d 条统计数据", len(number_stats))
-            else:
-                self.logger.warning("OCR未识别到有效数据")
-            
-            return number_stats
-            
         except Exception as exc:
             self.logger.error("OCR识别失败: %s", exc)
             import traceback
             self.logger.debug(traceback.format_exc())
             return []
+
+    def _run_tesseract_on_stats_region(self, full_screenshot, rect) -> List[Tuple[int, int]]:
+        """使用当前缓存或配置的推荐区区域，通过 Tesseract 提取统计数据。
+        
+        Args:
+            full_screenshot: 整个主窗口截图
+            rect: 主窗口矩形
+        
+        Returns:
+            [(号码, 次数), ...] 列表
+        """
+        target_region = self._get_stats_region(rect)
+        if not target_region:
+            return []
+
+        cropped_image = self._crop_region_from_window(full_screenshot, target_region, rect)
+        if not cropped_image:
+            self.logger.warning("无法裁剪OCR区域，放弃本次识别")
+            return []
+
+        # 保存裁剪后的调试截图
+        try:
+            import os
+            debug_path = os.path.join("logs", "recommendation_ocr_capture.png")
+            cropped_image.save(debug_path)
+            self.logger.info(
+                "已保存推荐号OCR裁剪截图: %s (尺寸: %dx%d)",
+                debug_path,
+                cropped_image.width,
+                cropped_image.height,
+            )
+        except Exception:  # pylint: disable=broad-except
+            self.logger.debug("保存推荐号OCR裁剪截图失败", exc_info=True)
+
+        # 图像预处理：灰度 + 放大，提高数字识别率
+        preprocessed = cropped_image.convert("L")
+        scale_factor = 2
+        try:
+            cfg_scale = int(self._ocr_region_config.get("scale_factor", 0))
+            if cfg_scale >= 2:
+                scale_factor = cfg_scale
+        except Exception:
+            scale_factor = 2
+        if scale_factor > 1:
+            new_size = (cropped_image.width * scale_factor, cropped_image.height * scale_factor)
+            preprocessed = preprocessed.resize(new_size)
+        self.logger.debug("推荐区OCR预处理后图像尺寸: %dx%d", preprocessed.width, preprocessed.height)
+
+        # 使用 Tesseract 对预处理后的整块区域做行级 OCR
+        try:
+            import pytesseract
+        except ImportError:
+            self.logger.warning(
+                "pytesseract 未安装，无法使用 Tesseract 识别推荐区，请先安装: pip install pytesseract 并安装 tesseract 引擎"
+            )
+            return []
+
+        # 配置 Tesseract 可执行文件路径和数据目录
+        tesseract_cmd = self._config.get("tesseract_cmd")
+        if tesseract_cmd:
+            import os as _os_check
+            if _os_check.path.exists(tesseract_cmd):
+                pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
+                tessdata_prefix = _os_check.path.dirname(tesseract_cmd)
+                _os_check.environ["TESSDATA_PREFIX"] = tessdata_prefix
+                self.logger.info("使用配置的 Tesseract 路径: %s", tesseract_cmd)
+                self.logger.info("已设置 TESSDATA_PREFIX: %s", tessdata_prefix)
+            else:
+                self.logger.warning("配置的 Tesseract 路径不存在: %s，请检查文件是否存在", tesseract_cmd)
+        else:
+            self.logger.info("未配置 tesseract_cmd，尝试使用系统 PATH 中的 tesseract")
+
+        custom_config = "--psm 6 -c tessedit_char_whitelist=0123456789:"
+        self.logger.info("使用 Tesseract 识别推荐区统计... (psm=6, whitelist=0123456789:)")
+        raw_text = pytesseract.image_to_string(preprocessed, config=custom_config)
+        if not raw_text:
+            self.logger.warning("Tesseract 未识别到任何文本")
+            return []
+
+        lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
+        for idx, line in enumerate(lines, 1):
+            self.logger.info("  [TESS 行 %d] '%s'", idx, line)
+
+        # 解析结果：从每一行提取“号码: 次数”
+        stats_map: Dict[int, int] = {}
+        pattern = r"^(\d)\s*[:：]\s*(\d{1,3})$"
+
+        for line in lines:
+            text = line.replace("O", "0").replace("o", "0").replace("：", ":")
+            if not text:
+                continue
+
+            parsed: Optional[Tuple[int, int]] = None
+            match = re.match(pattern, text)
+            if match:
+                parsed = (int(match.group(1)), int(match.group(2)))
+            else:
+                parsed = self._parse_ocr_stat_text(text)
+
+            if not parsed:
+                self.logger.debug("跳过无法解析的文本行: '%s'", text)
+                continue
+            number, count = parsed
+            if not (0 <= number <= 9 and 1 <= count <= 2000):
+                self.logger.debug("跳过范围外数据: 号码=%d, 次数=%d", number, count)
+                continue
+            previous = stats_map.get(number)
+            if previous is None or count > previous:
+                stats_map[number] = count
+                self.logger.info("  ✓ 解析成功: %d: %d", number, count)
+
+        number_stats = [(num, cnt) for num, cnt in stats_map.items()]
+        if number_stats:
+            number_stats.sort(key=lambda x: (-x[1], x[0]))
+            self.logger.info("✓ OCR成功识别 %d 条统计数据", len(number_stats))
+        else:
+            self.logger.warning("OCR未识别到有效数据")
+
+        return number_stats
+
+    def _get_stats_region(self, rect) -> Optional[Tuple[int, int, int, int]]:
+        """根据缓存或配置计算推荐区全局区域。
+        
+        Args:
+            rect: 主窗口矩形
+        
+        Returns:
+            推荐区全局坐标 (left, top, width, height)，失败时返回 None
+        """
+        if self._cached_stats_region:
+            offset_x, offset_y, width, height = self._cached_stats_region
+            left = rect.left + offset_x
+            top = rect.top + offset_y
+            return (left, top, width, height)
+
+        try:
+            target_region = self._compute_ocr_region(rect)
+            self.logger.info("使用配置的推荐区OCR区域: %s", target_region)
+            return target_region
+        except Exception as exc:  # pylint: disable=broad-except
+            self.logger.warning("根据配置计算推荐区OCR区域失败: %s", exc)
+            return None
+
+    def _extract_by_ocr_with_anchor(self, full_screenshot, rect) -> List[Tuple[int, int]]:
+        """使用 easyocr 在全窗口中查找锚点并更新推荐区缓存区域，然后再次用 Tesseract 识别。
+        
+        Args:
+            full_screenshot: 整个主窗口截图
+            rect: 主窗口矩形
+        
+        Returns:
+            [(号码, 次数), ...] 列表
+        """
+        reader = self._get_easyocr_reader()
+        if reader is None:
+            return []
+
+        try:
+            import numpy as np
+        except ImportError:
+            self.logger.warning("numpy 未安装，无法执行锚点OCR识别")
+            return []
+
+        anchor_region = self._locate_anchor_region(reader, np.array(full_screenshot), rect)
+        if not anchor_region:
+            self.logger.warning("未通过 easyocr 找到推荐号锚点，使用配置区域继续识别")
+            return self._run_tesseract_on_stats_region(full_screenshot, rect)
+
+        self.logger.info("✓ 通过锚点自适应定位OCR区域: %s", anchor_region)
+        self._update_cached_stats_region(anchor_region, rect)
+        return self._run_tesseract_on_stats_region(full_screenshot, rect)
+
+    def _get_easyocr_reader(self):
+        """懒加载并缓存 easyocr Reader 实例，仅在需要锚点识别时调用。
+        
+        Returns:
+            easyocr.Reader 实例，未安装 easyocr 时返回 None
+        """
+        if self._easyocr_reader is not None:
+            return self._easyocr_reader
+
+        try:
+            import easyocr
+        except ImportError:
+            self.logger.warning("easyocr未安装，跳过锚点OCR识别。安装: pip install easyocr")
+            return None
+
+        self.logger.info("初始化OCR引擎（easyocr，用于锚点识别）...")
+        self._easyocr_reader = easyocr.Reader(["ch_sim", "en"], gpu=False)
+        return self._easyocr_reader
+
+    def _update_cached_stats_region(self, anchor_region, rect) -> None:
+        """根据锚点返回的全局区域更新推荐区相对坐标缓存。
+        
+        Args:
+            anchor_region: 锚点定位出的推荐区全局坐标 (left, top, width, height)
+            rect: 主窗口矩形
+        """
+        try:
+            left, top, width, height = anchor_region
+            if width <= 0 or height <= 0:
+                return
+            offset_x = left - rect.left
+            offset_y = top - rect.top
+            self._cached_stats_region = (offset_x, offset_y, width, height)
+            self.__class__._shared_stats_region = self._cached_stats_region
+            self.logger.info(
+                "已缓存推荐区相对坐标: offset_x=%d, offset_y=%d, width=%d, height=%d",
+                offset_x,
+                offset_y,
+                width,
+                height,
+            )
+        except Exception:  # pylint: disable=broad-except
+            self.logger.debug("缓存推荐区相对坐标失败", exc_info=True)
 
     def _compute_ocr_region(self, rect) -> Tuple[int, int, int, int]:
         """根据配置或默认偏移返回 OCR 识别区域。"""
